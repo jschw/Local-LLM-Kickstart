@@ -1,6 +1,6 @@
 [
   {
-    "name": "Gemma 3 1b instruct",
+    "name": "Gemma-3-1b-instruct",
     "ip": "",
     "port": "4000",
     "model": "/Users/Julian/LLM_Models/Gemma/gemma-3-1b-it-q4_0/gemma-3-1b-it-q4_0.gguf",
@@ -16,7 +16,7 @@
     "api-key": ""
   },
   {
-    "name": "LLM Alpha Test",
+    "name": "LLM-Alpha-Test",
     "ip": "127.0.0.1",
     "port": "",
     "model": "",

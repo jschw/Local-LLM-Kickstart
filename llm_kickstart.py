@@ -5,9 +5,7 @@ import signal
 import time
 import json
 
-def _run_executable(executable_path, *args):
-    # Helper function that runs the executable with the given arguments
-    subprocess.run([executable_path, *args])
+# _run_executable is no longer needed, as we will use subprocess.Popen directly in create_process
 
 class LLMKickstart:
     def __init__(self):
@@ -97,8 +95,8 @@ class LLMKickstart:
             print(f"Process with name '{name}' already exists.")
             return
 
-        process = multiprocessing.Process(target=_run_executable, args=(executable_path, *args))
-        process.start()
+        # Start the process in a new process group so we can kill all children
+        process = subprocess.Popen([executable_path, *args], preexec_fn=os.setsid)
         self.processes[name] = process
         print(f"Process '{name}' started with PID {process.pid}.")
         self.update_process_list_file()
@@ -109,10 +107,14 @@ class LLMKickstart:
             return
 
         process = self.processes[name]
-        if process.is_alive():
-            os.kill(process.pid, signal.SIGTERM)
-            process.join()
-            print(f"Process '{name}' with PID {process.pid} has been stopped.")
+        if process.poll() is None:
+            try:
+                # Kill the entire process group
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                process.wait(timeout=5)
+                print(f"Process '{name}' with PID {process.pid} has been stopped.")
+            except Exception as e:
+                print(f"Failed to kill process group for '{name}': {e}")
         else:
             print(f"Process '{name}' is not running.")
         del self.processes[name]
@@ -131,7 +133,7 @@ class LLMKickstart:
     
     def list_processes(self):
         for name, process in self.processes.items():
-            status = "running" if process.is_alive() else "stopped"
+            status = "running" if process.poll() is None else "stopped"
             print(f"Process '{name}': PID {process.pid}, Status: {status}")
         self.update_process_list_file()
 
@@ -139,7 +141,7 @@ class LLMKickstart:
         process_list = {
             name: {
                 "pid": process.pid,
-                "status": "running" if process.is_alive() else "stopped"
+                "status": "running" if process.poll() is None else "stopped"
             }
             for name, process in self.processes.items()
         }
