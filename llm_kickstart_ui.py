@@ -26,6 +26,27 @@ class LLMKickstartUi(QMainWindow):
         self.llm_dropdown.setToolTip("Select LLM Configuration")
         layout.addWidget(self.llm_dropdown)
 
+        # Row for New and Delete LLM config buttons
+        from PyQt5.QtWidgets import QHBoxLayout, QFrame
+        button_row = QHBoxLayout()
+        self.add_config_button = QPushButton("New LLM config", self)
+        self.add_config_button.clicked.connect(self.add_llm_config)
+        button_row.addWidget(self.add_config_button)
+        self.delete_config_button = QPushButton("Delete LLM config", self)
+        self.delete_config_button.clicked.connect(self.delete_llm_config)
+        button_row.addWidget(self.delete_config_button)
+        layout.addLayout(button_row)
+
+        edit_button = QPushButton("Edit LLM Config", self)
+        edit_button.clicked.connect(self.open_llm_config_editor)
+        self.centralWidget().layout().addWidget(edit_button)
+
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator)
+
         # Buttons
         self.create_button = QPushButton("Start Endpoint", self)
         self.create_button.clicked.connect(self.create_process)
@@ -42,10 +63,6 @@ class LLMKickstartUi(QMainWindow):
         self.restart_button = QPushButton("Restart Endpoint", self)
         self.restart_button.clicked.connect(self.restart_process)
         layout.addWidget(self.restart_button)
-
-        edit_button = QPushButton("Edit LLM Config", self)
-        edit_button.clicked.connect(self.open_llm_config_editor)
-        self.centralWidget().layout().addWidget(edit_button)
 
         # Process list
         self.process_list = QListWidget(self)
@@ -79,6 +96,72 @@ class LLMKickstartUi(QMainWindow):
         except Exception as e:
             self.show_message(f"Failed to load LLM endpoint configurations: {e}")
 
+    def add_llm_config(self):
+        # Define the default config structure based on llm_config.json
+        default_config = {
+            "name": "New LLM config",
+            "ip": "",
+            "port": "",
+            "model": "",
+            "ctx-size": "",
+            "flash-attn": "",
+            "no-kv-offload": "",
+            "no-mmap": "",
+            "cache-type-k": "",
+            "cache-type-v": "",
+            "n-gpu-layers": "",
+            "lora": "",
+            "no-context-shift": "",
+            "api-key": ""
+        }
+        try:
+            with open("llm_config.json", "r") as f:
+                configs = json.load(f)
+        except Exception:
+            configs = []
+        configs.append(default_config)
+        with open("llm_config.json", "w") as f:
+            json.dump(configs, f, indent=2)
+        self.load_llm_configurations()
+        # Select the newly added config
+        self.llm_dropdown.setCurrentIndex(len(configs) - 1)
+
+    def delete_llm_config(self):
+        index = self.llm_dropdown.currentIndex()
+        if index < 0:
+            self.show_message("No LLM config selected to delete.")
+            return
+
+        # Confirmation dialog
+        config_name = self.llm_dropdown.currentText()
+        reply = QMessageBox.question(
+            self,
+            "Delete LLM Config",
+            f"Do you really want to delete the LLM config '{config_name}'?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            with open("llm_config.json", "r") as f:
+                configs = json.load(f)
+            if len(configs) == 0:
+                self.show_message("No LLM configs to delete.")
+                return
+            del configs[index]
+            with open("llm_config.json", "w") as f:
+                json.dump(configs, f, indent=2)
+            self.load_llm_configurations()
+            # Select the next config, or previous if at end, or clear if none left
+            if len(configs) > 0:
+                new_index = min(index, len(configs) - 1)
+                self.llm_dropdown.setCurrentIndex(new_index)
+            else:
+                self.llm_dropdown.setCurrentIndex(-1)
+        except Exception as e:
+            self.show_message(f"Failed to delete LLM config: {e}")
 
     # Add method to LLMKickstartUi to open the editor
     def open_llm_config_editor(self):
@@ -98,7 +181,6 @@ class LLMKickstartUi(QMainWindow):
             self.refresh_process_list()
         else:
             self.show_message("Please select an endpoint to stop.")
-
     def stop_all_processes(self):
         self.manager.stop_all_processes()
         self.refresh_process_list()
