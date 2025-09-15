@@ -6,27 +6,28 @@ from llm_kickstart import LLMKickstart
 
 def print_help():
     print("""Available commands:
-  /start <name>        Start an endpoint with the given config name
-  /stop <name>         Stop the endpoint with the given config name
-  /restart <name>      Restart the endpoint with the given config name
-  /stopall             Stop all running endpoints
-  /status              Show status of all endpoints
-  /listendpoints       List all available LLM endpoint configs
-  /help                Show this help message
-  /exit                Exit the CLI
-""")
+        /start <name>        Start an endpoint with the given config name
+        /stop <name>         Stop the endpoint with the given config name
+        /restart <name>      Restart the endpoint with the given config name
+        /stopall             Stop all running endpoints
+        /status              Show status of all endpoints
+        /listendpoints       List all available LLM endpoint configs
+        /help                Show this help message
+        /exit                Exit the CLI
+        """)
 
-def list_endpoints():
+def list_endpoints(llm_conf):
     try:
-        with open("llm_config.json", "r") as f:
-            configs = json.load(f)
-        if not configs:
+        if not llm_conf:
             print("No LLM endpoint configurations found.")
             return
+
         print("Available LLM endpoint configs:")
-        for config in configs:
+
+        for config in llm_conf:
             name = config.get("name", "Unnamed LLM")
             print(f"  - {name}")
+
     except Exception as e:
         print(f"Failed to load llm_config.json: {e}")
 
@@ -36,6 +37,10 @@ def main():
     args = parser.parse_args()
 
     manager = LLMKickstart()
+
+    # Get configs
+    app_conf_path, app_conf = manager.get_app_config()
+    llm_conf_path, llm_conf = manager.get_llm_config()
 
     if args.start:
         print(f"[Startup] Starting endpoint '{args.start}'...")
@@ -86,7 +91,7 @@ def main():
             manager.list_processes()
         
         elif command == "/listendpoints":
-            list_endpoints()
+            list_endpoints(llm_conf=llm_conf)
         
         elif command == "/help":
             print_help()
