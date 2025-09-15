@@ -1,10 +1,11 @@
-import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QPushButton, QWidget, QListWidget, QComboBox, QMessageBox
 from PyQt5.QtWidgets import QComboBox, QPushButton
 
-from llm_kickstart import LLMKickstart
-from llm_kickstart_editor_ui import LLMConfigEditor
+from .llm_kickstart import LLMKickstart
+from .llm_kickstart_editor_ui import LLMConfigEditor
+
 import json
+import sys
 
 class LLMKickstartUi(QMainWindow):
     def __init__(self):
@@ -241,9 +242,12 @@ class LLMKickstartUi(QMainWindow):
             QApplication.instance().quit()
         # else: do nothing
 
-if __name__ == "__main__":
+def main():
     app = QApplication(sys.argv)
     window = LLMKickstartUi()
     window.load_llm_configurations()
     window.show()
     sys.exit(app.exec_())
+
+if __name__ == "__main__":
+    main()

@@ -38,7 +38,7 @@ class LLMKickstart:
                 # Create llm config file if not existing
                 tmp_llm_config = [
                     {
-                        "name": "Local LLM Model",
+                        "name": "Local_LLM_Model",
                         "ip": "",
                         "port": "4000",
                         "model": "llm_model.gguf",
@@ -102,13 +102,13 @@ class LLMKickstart:
         """
         Start a new process running ./llama_server with parameters from the config for the given LLM name.
         """
-        if self.config is None:
+        if self.llm_config is None:
             print("Configuration not loaded. Please call load_config() first.")
             return
 
         # Find the LLM config by name
         llm_config = None
-        for conf in self.config:
+        for conf in self.llm_config:
             if conf.get("name") == name:
                 llm_config = conf
                 break

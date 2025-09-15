@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QPushButton, QLineEdit, QWidget, QComboBox, QFileDialog
-from PyQt5.QtWidgets import QFormLayout, QComboBox, QLineEdit, QPushButton, QHBoxLayout
+from PyQt5.QtWidgets import QFormLayout, QComboBox, QLineEdit, QPushButton
 from PyQt5.QtCore import pyqtSignal
 import json
 

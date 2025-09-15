@@ -1,8 +1,5 @@
 import argparse
-import sys
-import json
-
-from llm_kickstart import LLMKickstart
+from .llm_kickstart import LLMKickstart
 
 def print_help():
     print("""Available commands:
