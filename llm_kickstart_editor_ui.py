@@ -5,17 +5,19 @@ import json
 
 class LLMConfigEditor(QWidget):
     config_saved = pyqtSignal()
-    def __init__(self, parent=None, config_index=0):
+
+    def __init__(self, parent=None, config_index=0, llm_config_path = "llm_config.json"):
         super().__init__(parent)
         self.setWindowTitle("Edit LLM Configuration")
         self.setGeometry(150, 150, 400, 500)
         self.config_index = config_index
+        self.llm_conf_path = llm_config_path
         self.load_config()
         self.init_ui()
 
     def load_config(self):
         try:
-            with open("llm_config.json", "r") as f:
+            with open(self.llm_conf_path, "r") as f:
                 self.llm_configs = json.load(f)
             if self.config_index < 0 or self.config_index >= len(self.llm_configs):
                 self.config_index = 0
@@ -23,7 +25,7 @@ class LLMConfigEditor(QWidget):
         except Exception as e:
             self.llm_configs = []
             self.config = {}
-            print(f"Failed to load llm_config.json: {e}")
+            print(f"Failed to load {self.llm_conf_path}: {e}")
 
     def init_ui(self):
         
@@ -191,8 +193,8 @@ class LLMConfigEditor(QWidget):
         # Save back to file
         try:
             self.llm_configs[self.config_index] = self.config
-            with open("llm_config.json", "w") as f:
-                json.dump(self.llm_configs, f, indent=2)
+            with open(self.llm_conf_path, "w") as f:
+                json.dump(self.llm_configs, f, indent=4)
             self.config_saved.emit()
             self.close()
         except Exception as e:

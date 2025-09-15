@@ -10,6 +10,8 @@ class LLMKickstartUi(QMainWindow):
     def __init__(self):
         super().__init__()
         self.manager = LLMKickstart()
+        self.app_conf_path, self.app_conf = self.manager.get_app_config()
+        self.llm_conf_path, self.llm_conf = self.manager.get_llm_config()
         self.init_ui()
 
     def init_ui(self):
@@ -88,10 +90,8 @@ class LLMKickstartUi(QMainWindow):
 
     def load_llm_configurations(self):
         try:
-            with open("llm_config.json", "r") as f:
-                self.llm_configs = json.load(f)
             self.llm_dropdown.clear()
-            for config in self.llm_configs:
+            for config in self.llm_conf:
                 self.llm_dropdown.addItem(config.get("name", "Unnamed LLM"))
         except Exception as e:
             self.show_message(f"Failed to load LLM endpoint configurations: {e}")
@@ -115,14 +115,20 @@ class LLMKickstartUi(QMainWindow):
             "api-key": ""
         }
         try:
-            with open("llm_config.json", "r") as f:
+            with open(self.llm_conf_path, "r") as f:
                 configs = json.load(f)
         except Exception:
             configs = []
         configs.append(default_config)
-        with open("llm_config.json", "w") as f:
-            json.dump(configs, f, indent=2)
+
+        with open(self.llm_conf_path, "w") as f:
+            json.dump(configs, f, indent=4)
+
         self.load_llm_configurations()
+
+        # Invoke reload in manager
+        self.manager.refresh_config()
+
         # Select the newly added config
         self.llm_dropdown.setCurrentIndex(len(configs) - 1)
 
@@ -145,15 +151,23 @@ class LLMKickstartUi(QMainWindow):
             return
 
         try:
-            with open("llm_config.json", "r") as f:
+            with open(self.llm_conf_path, "r") as f:
                 configs = json.load(f)
+
             if len(configs) == 0:
                 self.show_message("No LLM configs to delete.")
                 return
+
             del configs[index]
-            with open("llm_config.json", "w") as f:
-                json.dump(configs, f, indent=2)
+
+            with open(self.llm_conf_path, "w") as f:
+                json.dump(configs, f, indent=4)
+
             self.load_llm_configurations()
+
+            # Invoke reload in manager
+            self.manager.refresh_config()
+
             # Select the next config, or previous if at end, or clear if none left
             if len(configs) > 0:
                 new_index = min(index, len(configs) - 1)
@@ -169,10 +183,12 @@ class LLMKickstartUi(QMainWindow):
         if index < 0:
             self.show_message("Please select a valid LLM configuration to edit.")
             return
-        self.editor = LLMConfigEditor(None, config_index=index)
+        self.editor = LLMConfigEditor(None, config_index=index, llm_config_path=self.llm_conf_path)
         self.editor.show()
         self.editor.destroyed.connect(self.load_llm_configurations)
         self.editor.config_saved.connect(self.load_llm_configurations)
+        # Invoke reload in manager
+        self.manager.refresh_config()
     
     def stop_process(self):
         name = self.llm_dropdown.currentText()

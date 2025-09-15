@@ -4,21 +4,28 @@ import os
 import signal
 import time
 import json
+import appdirs
+from pathlib import Path
 
-# _run_executable is no longer needed, as we will use subprocess.Popen directly in create_process
 
 class LLMKickstart:
     def __init__(self):
-        self.target_server_app  = ""
-        self.use_python_server_lib = False
+        CONFIG_DIR = Path(appdirs.user_config_dir(appname='LLM_Kickstart'))
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-        self.config             = None
-        self.app_config         = None
-        self.load_config()
+        self.llm_config_path        = CONFIG_DIR / 'llm_config.json'
+        self.app_config_path        = CONFIG_DIR / 'app_config.json'
+        self.proc_list              = CONFIG_DIR / 'process_list.json'
 
-        self.processes = {}
-        self.process_list_file  = "process_list.json"
-        self.output_cache       = ""  # Cache for all process output
+        self.target_server_app      = ""
+        self.use_python_server_lib  = False
+
+        self.llm_config             = None
+        self.app_config             = None
+        self.load_config(llm_config_path=self.llm_config_path, app_config_path=self.app_config_path)
+
+        self.processes              = {}
+        self.output_cache           = ""  # Cache for all process output
 
         self.update_process_list_file()
 
@@ -27,16 +34,50 @@ class LLMKickstart:
         Load and parse the llm_config.json file into structured variables.
         """
         try:
+            if not self.llm_config_path.exists():
+                # Create llm config file if not existing
+                tmp_llm_config = [
+                    {
+                        "name": "Local LLM Model",
+                        "ip": "",
+                        "port": "4000",
+                        "model": "llm_model.gguf",
+                        "ctx-size": "",
+                        "flash-attn": "",
+                        "no-kv-offload": "",
+                        "no-mmap": "",
+                        "cache-type-k": "",
+                        "cache-type-v": "",
+                        "n-gpu-layers": "",
+                        "lora": "",
+                        "no-context-shift": "",
+                        "api-key": ""
+                    }
+                ]
+
+                with self.llm_config_path.open('w') as f:
+                    json.dump(tmp_llm_config, f, indent=4)
+                    
             with open(llm_config_path, "r") as f:
-                self.config = json.load(f)
+                self.llm_config = json.load(f)
         except Exception as e:
             print(f"Failed to load config file {llm_config_path}: {e}")
-            self.config = None
+            self.llm_config = None
 
         """
         Load and parse the app_config.json file into structured variables.
         """
         try:
+            if not self.app_config_path.exists():
+                # Create llm config file if not existing
+                tmp_app_config = {
+                    "llama-server-path": "/Users/Julian/Downloads/llm_models_gguf/llama.cpp/build/bin/llama-server",
+                    "use-llama-server-python": "false"
+                    }
+
+                with self.app_config_path.open('w') as f:
+                    json.dump(tmp_app_config, f, indent=4)
+
             with open(app_config_path, "r") as f:
                 self.app_config = json.load(f)
                 self.target_server_app = self.app_config["llama-server-path"]
@@ -46,6 +87,17 @@ class LLMKickstart:
             print(f"Failed to load config file {app_config_path}: {e}")
             self.app_config = None
 
+    def get_llm_config(self):
+        return self.llm_config_path, self.llm_config
+
+    def get_app_config(self):
+        return self.app_config_path, self.app_config
+
+    def refresh_config(self):
+        self.llm_config = None
+        self.app_config = None
+        self.load_config(llm_config_path=self.llm_config_path, app_config_path=self.app_config_path)
+    
     def create_endpoint(self, name):
         """
         Start a new process running ./llama_server with parameters from the config for the given LLM name.
@@ -145,6 +197,6 @@ class LLMKickstart:
             }
             for name, process in self.processes.items()
         }
-        with open(self.process_list_file, "w") as file:
+        with open(self.proc_list, "w") as file:
             json.dump(process_list, file, indent=4)
             
