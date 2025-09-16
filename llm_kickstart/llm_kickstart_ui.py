@@ -210,7 +210,7 @@ class LLMKickstartUi(QMainWindow):
     def refresh_process_list(self):
         self.process_list.clear()
         for name, process in self.manager.processes.items():
-            status = "running" if process.is_alive() else "stopped"
+            status = "running" if process.poll() is None else "stopped"
             self.process_list.addItem(f"{name}: PID {process.pid}, Status: {status}")
 
     def show_message(self, message):
@@ -226,7 +226,7 @@ class LLMKickstartUi(QMainWindow):
     def handle_close_button(self):
         # Show confirmation dialog
         running_endpoints = any(
-            process.is_alive() for process in getattr(self.manager, "processes", {}).values()
+            process.poll() for process in getattr(self.manager, "processes", {}).values()
         )
         msg = "Do you really want to close the application?"
         if running_endpoints:
