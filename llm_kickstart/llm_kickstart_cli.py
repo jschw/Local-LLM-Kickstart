@@ -43,7 +43,7 @@ def main():
         print(f"[Startup] Starting endpoint '{args.start}'...")
         manager.create_endpoint(args.start)
 
-    print("LLM Kickstart CLI. Type /help for commands. Type /exit to quit.")
+    print("LLM Kickstart CLI.\nType /help for commands. Type /exit to quit.\n")
 
     while True:
         try:

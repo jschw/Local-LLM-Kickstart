@@ -5,6 +5,7 @@ import signal
 import time
 import json
 import appdirs
+import sys
 from pathlib import Path
 
 
@@ -72,7 +73,7 @@ class LLMKickstart:
                 # Create llm config file if not existing
                 tmp_app_config = {
                     "llama-server-path": "/Users/Julian/Downloads/llm_models_gguf/llama.cpp/build/bin/llama-server",
-                    "use-llama-server-python": "false"
+                    "use-llama-server-python": "False"
                     }
 
                 with self.app_config_path.open('w') as f:
@@ -81,7 +82,12 @@ class LLMKickstart:
             with open(app_config_path, "r") as f:
                 self.app_config = json.load(f)
                 self.target_server_app = self.app_config["llama-server-path"]
-                self.use_python_server_lib = bool(self.app_config["use-llama-server-python"])
+                self.use_python_server_lib = json.loads(str(self.app_config["use-llama-server-python"]).lower())
+
+                # Check app file if python lib is not activated
+                if not self.use_python_server_lib:
+                    if os.path.exists(self.target_server_app ):
+                        print("Error: llama-server executable file not found.")
 
         except Exception as e:
             print(f"Failed to load config file {app_config_path}: {e}")
@@ -119,6 +125,7 @@ class LLMKickstart:
 
         # Build command line arguments from the config
         args = []
+        self.args_dict = {}
         for key, value in llm_config.items():
             if key == "name":
                 continue  # skip name in args
@@ -133,12 +140,13 @@ class LLMKickstart:
             if str(value).lower() == "true" or str(value).lower() == "false":
                 if value:
                     args.append(arg_key)
+                    self.args_dict[arg_key] = True
                 # if false, skip adding the flag
             else:
                 args.append(arg_key)
                 args.append(str(value))
+                self.args_dict[arg_key] = value
 
-        print(args)
         # Start the process using create_process
         self.create_process(name, self.target_server_app, *args)
 
@@ -148,8 +156,25 @@ class LLMKickstart:
             return
 
         # Start the process in a new process group so we can kill all children
-        process = subprocess.Popen([executable_path, *args], preexec_fn=os.setsid)
-        self.processes[name] = process
+        if self.use_python_server_lib:
+            # Use python bindings instead of binaries
+            process = subprocess.Popen([
+                                sys.executable,
+                                "-m", "llama_cpp.server",
+                                "--model", self.args_dict["--model"],
+                                "--port", self.args_dict["--port"],
+                            ], preexec_fn=os.setsid)
+            self.processes[name] = process
+
+        else:
+            # Check app file if python lib is not activated
+            if not os.path.exists(self.target_server_app ):
+                print("Error: llama-server executable file not found.")
+                return
+
+            process = subprocess.Popen([executable_path, *args], preexec_fn=os.setsid)
+            self.processes[name] = process
+
         print(f"Process '{name}' started with PID {process.pid}.")
         self.update_process_list_file()
 
@@ -184,9 +209,13 @@ class LLMKickstart:
         self.update_process_list_file()
     
     def list_processes(self):
-        for name, process in self.processes.items():
-            status = "running" if process.poll() is None else "stopped"
-            print(f"Process '{name}': PID {process.pid}, Status: {status}")
+        if len(self.processes.items()) > 0:
+            for name, process in self.processes.items():
+                status = "running" if process.poll() is None else "stopped"
+                print(f"- Process '{name}': PID {process.pid}, Status: {status}")
+        else:
+            print("- no processes currently running -")
+
         self.update_process_list_file()
 
     def update_process_list_file(self):
