@@ -37,6 +37,7 @@ class LLMKickstart:
         try:
             if not self.llm_config_path.exists():
                 # Create llm config file if not existing
+                # Template content of llm_config.json
                 tmp_llm_config = [
                     {
                         "name": "Local_LLM_Model",
@@ -71,6 +72,7 @@ class LLMKickstart:
         try:
             if not self.app_config_path.exists():
                 # Create llm config file if not existing
+                # Template content of the app_config.json
                 tmp_app_config = {
                     "llama-server-path": "/Users/Julian/Downloads/llm_models_gguf/llama.cpp/build/bin/llama-server",
                     "use-llama-server-python": "False"
@@ -86,7 +88,7 @@ class LLMKickstart:
 
                 # Check app file if python lib is not activated
                 if not self.use_python_server_lib:
-                    if os.path.exists(self.target_server_app ):
+                    if not os.path.exists(self.target_server_app ):
                         print("Error: llama-server executable file not found.")
 
         except Exception as e:

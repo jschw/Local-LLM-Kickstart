@@ -3,6 +3,7 @@ from PyQt5.QtWidgets import QComboBox, QPushButton
 
 from .llm_kickstart import LLMKickstart
 from .llm_kickstart_editor_ui import LLMConfigEditor
+from .llm_kickstart_app_config_editor_ui import AppConfigEditor
 
 import json
 import sys
@@ -43,6 +44,11 @@ class LLMKickstartUi(QMainWindow):
         edit_button = QPushButton("Edit LLM Config", self)
         edit_button.clicked.connect(self.open_llm_config_editor)
         self.centralWidget().layout().addWidget(edit_button)
+
+        # App Config Editor button
+        self.edit_app_config_button = QPushButton("Edit App Config", self)
+        self.edit_app_config_button.clicked.connect(self.open_app_config_editor)
+        layout.addWidget(self.edit_app_config_button)
 
         # Separator line
         separator = QFrame()
@@ -167,6 +173,7 @@ class LLMKickstartUi(QMainWindow):
             self.load_llm_configurations()
 
             # Invoke reload in manager
+            print("-> Invoke config refresh")
             self.manager.refresh_config()
 
             # Select the next config, or previous if at end, or clear if none left
@@ -184,13 +191,26 @@ class LLMKickstartUi(QMainWindow):
         if index < 0:
             self.show_message("Please select a valid LLM configuration to edit.")
             return
-        self.editor = LLMConfigEditor(None, config_index=index, llm_config_path=self.llm_conf_path)
-        self.editor.show()
-        self.editor.destroyed.connect(self.load_llm_configurations)
-        self.editor.config_saved.connect(self.load_llm_configurations)
-        # Invoke reload in manager
-        self.manager.refresh_config()
+        self.llm_config_editor = LLMConfigEditor(None, config_index=index, llm_config_path=self.llm_conf_path)
+        self.llm_config_editor.show()
+        self.llm_config_editor.config_saved.connect(self.refresh_llm_config)
     
+    def open_app_config_editor(self):
+        self.app_config_editor = AppConfigEditor(None, app_config_path=str(self.app_conf_path))
+        self.app_config_editor.show()
+        self.app_config_editor.config_saved.connect(self.refresh_app_config)
+
+    def refresh_app_config(self):
+        # Reload app config in manager and update local copy
+        self.manager.refresh_config()
+        self.app_conf_path, self.app_conf = self.manager.get_app_config()
+
+    def refresh_llm_config(self):
+        # Reload llm config in manager and update local copy
+        self.manager.refresh_config()
+        self.load_llm_configurations()
+        self.llm_conf_path, self.llm_conf = self.manager.get_llm_config()
+
     def stop_process(self):
         name = self.llm_dropdown.currentText()
         if name:

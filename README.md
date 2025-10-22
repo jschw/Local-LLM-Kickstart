@@ -27,6 +27,31 @@ The CLI (via `llm_kickstart.py`) provides similar functionality programmatically
   manager.stop_all_processes()
   ```
 
+## Installation
+Installation from git repo:
+
+```
+git clone https://github.com/jschw/Local-LLM-Kickstart
+cd Local-LLM-Kickstart
+pip install .
+```
+
+Install from pypy.org:
+
+Commandline interface only:
+```
+pip install llm_kickstart
+```
+or
+```
+pip install llm_kickstart['cli']
+```
+
+With GUI:
+```
+pip install llm_kickstart['ui']
+```
+
 ## Usage
 
 ### GUI
