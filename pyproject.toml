@@ -23,3 +23,7 @@ ui = ["PyQt5>=5.15"]
 
 # Define a "cli" extra that doesn't add anything extra — just for naming convenience
 cli = []
+
+[project.scripts]
+llm-kickstart-ui = "llm_kickstart.llm_kickstart_ui:main"
+llm-kickstart-cli = "llm_kickstart.llm_kickstart_cli:main"

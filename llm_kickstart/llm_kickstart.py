@@ -1,8 +1,6 @@
-import multiprocessing
 import subprocess
 import os
 import signal
-import time
 import json
 import appdirs
 import sys
@@ -75,7 +73,10 @@ class LLMKickstart:
                 # Template content of the app_config.json
                 tmp_app_config = {
                     "llama-server-path": "/Users/Julian/Downloads/llm_models_gguf/llama.cpp/build/bin/llama-server",
-                    "use-llama-server-python": "False"
+                    "use-llama-server-python": "False",
+                    "enable-rag-server": "False",
+                    "rag-proxy-serve-port": "8001",
+                    "rag-proxy-llm-port": "4000"
                     }
 
                 with self.app_config_path.open('w') as f:
