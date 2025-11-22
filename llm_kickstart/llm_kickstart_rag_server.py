@@ -1,6 +1,6 @@
-from fastapi import FastAPI, Request
-# from fastapi.responses import JSONResponse
-# from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from sse_starlette import EventSourceResponse
 from openai import OpenAI
 import uvicorn
 from pathlib import Path
@@ -68,10 +68,17 @@ rag_enabled         = False
 async def list_models():
     """Return a list of available models (mirrors OpenAI API)."""
     models = client.models.list()
+    models = models.model_dump_json()
+    model_list = json.loads(models)
+
+    for model in model_list["data"]:
+        mod_name = model["id"]
+        mod_name = os.path.basename(mod_name)
+        model["id"] = mod_name
 
     # OpenAI returns an OpenAIObject, which is not JSON serializable.
     # Use .to_dict() to get a serializable dictionary.
-    return models
+    return JSONResponse(model_list)
 
 # ----------------------------
 # /v1/disablerag endpoint
@@ -115,44 +122,59 @@ async def rag_update_pdf(request: Request):
 # ----------------------------
 # /v1/chat/completions endpoint
 # ----------------------------
+async def event_generator(generator):
+    for element in generator:
+        yield element.model_dump_json()
+    yield "[DONE]"
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     global rag_enabled
 
-    body = await request.json()
+    try:
+        payload = await request.json()
 
-    if rag_enabled:
-        # --- Inject RAG context before forwarding ---
-        # Query Vectorstore
-        messages = body.get("messages", [])
-        last_message = messages[-1]  # This is a dict: {"role": "...", "content": "..."}
-        last_user_message = last_message.get("content", "")
+        if rag_enabled:
+            # --- Inject RAG context before forwarding ---
+            # Query Vectorstore
+            messages = payload.get("messages", [])
+            last_message = messages[-1]  # This is a dict: {"role": "...", "content": "..."}
+            last_user_message = last_message.get("content", "")
 
-        rag_output = rag_provider.search_knn(last_user_message)
+            rag_output = rag_provider.search_knn(last_user_message)
 
-        rag_context = "The following parts of a document or website should be considered when generating responses and/or answers to the users questions:\n"
+            rag_context = "The following parts of a document or website should be considered when generating responses and/or answers to the users questions:\n"
 
-        num = 1
-        for chunk in rag_output:
-            rag_context += f"[\n{num}:\n"
-            rag_context += chunk
-            rag_context += f"\n],\n"
-            num += 1
+            num = 1
+            for chunk in rag_output:
+                rag_context += f"[\n{num}:\n"
+                rag_context += chunk
+                rag_context += f"\n],\n"
+                num += 1
 
-        rag_context += f"All of the parts of a document or website should only be used if it is helpful in answering the user's question.\n"
+            rag_context += f"All of the parts of a document or website should only be used if it is helpful in answering the user's question.\n"
 
-        injected_message = {
-            "role": "user",
-            "content": rag_context
-        }
+            injected_message = {
+                "role": "user",
+                "content": rag_context
+            }
 
-        body["messages"].insert(0, injected_message)  # insert at top
-        # OR: body["messages"].append(injected_message)
-    
-    # Forward the modified body to OpenAI
-    response = client.chat.completions.create(**body)
+            payload["messages"].insert(0, injected_message)  # insert at top
+            # OR: payload["messages"].append(injected_message)
 
-    return response
+        stream = payload.get("stream", False)
+
+        # Streaming mode
+        if stream:
+            stream_response = client.chat.completions.create(**payload)
+            return EventSourceResponse(event_generator(stream_response))
+
+        # Non-streaming mode
+        response = client.chat.completions.create(**payload)
+        return JSONResponse(response.model_dump_json())
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ----------------------------
