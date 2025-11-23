@@ -10,14 +10,11 @@ class KickstartVectorsearch:
         # Load and initialize embedding model
         self.embedding_model  = TextEmbedding('sentence-transformers/all-MiniLM-L6-v2')
 
-        self.fallback_document_path = os.path.expanduser("~/LLM_Kickstart_Documents")
-
     def init_vectorstore_pdf(self, pdf_path):
         # Read and split PDF file
         print(f"-> Reading PDF file {pdf_path}...")
 
         try:
-
             reader = PdfReader(pdf_path)
 
             raw_text = ""
@@ -31,7 +28,7 @@ class KickstartVectorsearch:
             # Split
             text_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=500,
-                chunk_overlap=100,
+                chunk_overlap=50,
                 separators=["\n\n", "\n", ".", " ", ""]
             )
 

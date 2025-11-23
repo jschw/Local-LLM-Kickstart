@@ -1,234 +1,260 @@
-import subprocess
-import os
-import signal
-import json
+import argparse
+import os, sys
 import appdirs
-import sys
 from pathlib import Path
+import requests
+import json
+from llm_server import LocalLLMServer
+from rag_server import LocalRAGServer
 
+# Define variables
+CONFIG_DIR = Path(appdirs.user_config_dir(appname='LLM_Kickstart'))
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-class LLMKickstart:
-    def __init__(self):
-        CONFIG_DIR = Path(appdirs.user_config_dir(appname='LLM_Kickstart'))
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+kickstart_config_path   = CONFIG_DIR / 'kickstart_config.json'
+kickstart_config        = None
 
-        self.llm_config_path        = CONFIG_DIR / 'llm_config.json'
-        self.app_config_path        = CONFIG_DIR / 'app_config.json'
-        self.proc_list              = CONFIG_DIR / 'process_list.json'
+# Module config
+enable_llm_server       = False
+enable_rag_server       = False
+enable_webconfig        = False
 
-        self.target_server_app      = ""
-        self.use_python_server_lib  = False
+def init():
+    pass
 
-        self.llm_config             = None
-        self.app_config             = None
-        self.load_config(llm_config_path=self.llm_config_path, app_config_path=self.app_config_path)
-
-        self.processes              = {}
-        self.output_cache           = ""  # Cache for all process output
-
-        self.update_process_list_file()
-
-    def load_config(self, llm_config_path="llm_config.json", app_config_path="app_config.json"):
-        """
-        Load and parse the llm_config.json file into structured variables.
-        """
-        try:
-            if not self.llm_config_path.exists():
-                # Create llm config file if not existing
-                # Template content of llm_config.json
-                tmp_llm_config = [
-                    {
-                        "name": "Local_LLM_Model",
-                        "ip": "",
-                        "port": "4000",
-                        "model": "llm_model.gguf",
-                        "ctx-size": "",
-                        "flash-attn": "",
-                        "no-kv-offload": "",
-                        "no-mmap": "",
-                        "cache-type-k": "",
-                        "cache-type-v": "",
-                        "n-gpu-layers": "",
-                        "lora": "",
-                        "no-context-shift": "",
-                        "api-key": ""
-                    }
-                ]
-
-                with self.llm_config_path.open('w') as f:
-                    json.dump(tmp_llm_config, f, indent=4)
-                    
-            with open(llm_config_path, "r") as f:
-                self.llm_config = json.load(f)
-        except Exception as e:
-            print(f"Failed to load config file {llm_config_path}: {e}")
-            self.llm_config = None
-
-        """
-        Load and parse the app_config.json file into structured variables.
-        """
-        try:
-            if not self.app_config_path.exists():
-                # Create llm config file if not existing
-                # Template content of the app_config.json
-                tmp_app_config = {
-                    "llama-server-path": "/Users/Julian/Downloads/llm_models_gguf/llama.cpp/build/bin/llama-server",
-                    "use-llama-server-python": "False",
-                    "enable-rag-server": "False",
-                    "rag-proxy-serve-port": "8001",
-                    "rag-proxy-llm-port": "4000"
-                    }
-
-                with self.app_config_path.open('w') as f:
-                    json.dump(tmp_app_config, f, indent=4)
-
-            with open(app_config_path, "r") as f:
-                self.app_config = json.load(f)
-                self.target_server_app = self.app_config["llama-server-path"]
-                self.use_python_server_lib = json.loads(str(self.app_config["use-llama-server-python"]).lower())
-
-                # Check app file if python lib is not activated
-                if not self.use_python_server_lib:
-                    if not os.path.exists(self.target_server_app ):
-                        print("Error: llama-server executable file not found.")
-
-        except Exception as e:
-            print(f"Failed to load config file {app_config_path}: {e}")
-            self.app_config = None
-
-    def get_llm_config(self):
-        return self.llm_config_path, self.llm_config
-
-    def get_app_config(self):
-        return self.app_config_path, self.app_config
-
-    def refresh_config(self):
-        self.llm_config = None
-        self.app_config = None
-        self.load_config(llm_config_path=self.llm_config_path, app_config_path=self.app_config_path)
+def print_help():
+    print("""Available commands:
+        /start <name>        Start an endpoint with the given config name
+        /stop <name>         Stop the endpoint with the given config name
+        /restart <name>      Restart the endpoint with the given config name
+        /stopall             Stop all running endpoints
+        /status              Show status of all endpoints
+        /listendpoints       List all available LLM endpoint configs
+        /getconfig           Output the paths of app config and llm config files
+        /editllm <Name of the llm config set> <name of the value> <New value>
+        /editconf <Name of the key> <New value>
+        /newllm <Name>         Create a new LLM config set
+        /deletellm <Name>      Delete an LLM config set
+        /renamellm <Old> <New> Rename an LLM config set
+        /showllmconf <Name>   Show all parameters of the LLM config set <Name>
+        /showkickstartconf         Show all parameters in kickstart_config.json
+        /showllmserverconf      Show all parameters in llm_server_config.json
+        /ragupdatefile <Path>    Read a PDF file into temp RAG system
+        /ragupdatewebsite <URL> <Crawl ref depth> Read the content of a web page to temp RAG system
+        /disablerag         Disables the temp RAG system
+        /help                Show this help message
+        /exit                Exit the CLI
+        """)
     
-    def create_endpoint(self, name):
-        """
-        Start a new process running ./llama_server with parameters from the config for the given LLM name.
-        """
-        if self.llm_config is None:
-            print("Configuration not loaded. Please call load_config() first.")
-            return
+def load_config():
+    """
+    Load and parse the kickstart_config.json file into structured variables.
+    """
+    try:
+        if not kickstart_config_path.exists():
+            # Create llm config file if not existing
+            # Template content of the llm_server_config.json
+            tmp_kickstart_config = {
+                "enable-llm-server": "True",
+                "enable-rag-server": "True",
+                "enable-webconfig": "False"
+                }
 
-        # Find the LLM config by name
-        llm_config = None
-        for conf in self.llm_config:
-            if conf.get("name") == name:
-                llm_config = conf
-                break
+            with kickstart_config_path.open('w') as f:
+                json.dump(tmp_kickstart_config, f, indent=4)
 
-        if llm_config is None:
-            print(f"No configuration found for LLM with name '{name}'.")
-            return
+        with open(kickstart_config_path, "r") as f:
+            kickstart_config    = json.load(f)
+            enable_llm_server   = json.loads(str(kickstart_config["enable-llm-server"]).lower())
+            enable_rag_server   = json.loads(str(kickstart_config["enable-rag-server"]).lower())
+            enable_webconfig    = json.loads(str(kickstart_config["enable-webconfig"]).lower())
 
-        # Build command line arguments from the config
-        args = []
-        self.args_dict = {}
-        for key, value in llm_config.items():
-            if key == "name":
-                continue  # skip name in args
 
-            if value == "" or str(value).lower() == "default":
-                continue # skip default values
+    except Exception as e:
+        print(f"Failed to load config file {kickstart_config_path}: {e}")
+        kickstart_config = None
 
-            # Convert key to command line argument format, e.g. "model-path" -> "--model-path"
-            arg_key = f"--{key}"
+def main_app():
+    parser = argparse.ArgumentParser(description="LLM Kickstart CLI - Manage inference endpoints")
+    parser.add_argument('--start', metavar='NAME', type=str, help='Start the endpoint with the given config name on startup')
+    args, _ = parser.parse_known_args()
 
-            # Convert boolean to flag or no flag
-            if str(value).lower() == "true" or str(value).lower() == "false":
-                if value:
-                    args.append(arg_key)
-                    self.args_dict[arg_key] = True
-                # if false, skip adding the flag
+    # Start modules
+    llm_server = LocalLLMServer()
+    rag_server = LocalRAGServer()
+    rag_server.start()
+
+    # Get config
+    kickstart_config = None
+    # TODO
+
+    if args.start:
+        print(f"[Startup] Starting endpoint '{args.start}'...")
+        llm_server.create_endpoint(args.start)
+
+    # Start RAG proxy server
+    rag_proxy_url = f"http://localhost:{rag_server.get_rag_proxy_serve_port()}"
+
+    print("LLM Kickstart CLI.\nType /help for commands. Type /exit to quit.\n")
+
+    while True:
+        try:
+            user_input = input("llm-kickstart> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting.")
+            rag_server.stop()
+            llm_server.stop_all_processes()
+            break
+
+        if not user_input:
+            continue
+
+        if not user_input.startswith("/"):
+            print("Commands must start with a slash. Type /help for available commands.")
+            continue
+
+        tokens = user_input.split()
+        command = tokens[0].lower()
+        args = tokens[1:]
+
+        if command == "/start":
+            if len(args) != 1:
+                print("Usage: /start <name>")
             else:
-                args.append(arg_key)
-                args.append(str(value))
-                self.args_dict[arg_key] = value
+                llm_server.create_endpoint(args[0])
+        
+        elif command == "/stop":
+            if len(args) != 1:
+                print("Usage: /stop <name>")
+            else:
+                llm_server.stop_process(args[0])
+        
+        elif command == "/restart":
+            if len(args) != 1:
+                print("Usage: /restart <name>")
+            else:
+                llm_server.restart_process(args[0], None)
+        
+        elif command == "/stopall":
+            llm_server.stop_all_processes()
+        
+        elif command == "/status":
+            llm_server.list_processes()
+        
+        elif command == "/listendpoints":
+            llm_server.listendpoints()
 
-        # Start the process using create_process
-        self.create_process(name, self.target_server_app, *args)
+        elif command == "/getconfig":
+            #print(f"  -> App config path: {app_conf_path}")
+            print(f"  -> LLM server config path: {llm_server.get_llm_server_config_path}")
+            print(f"  -> LLM config path: {llm_server.get_llm_config_path}")
+        
+        elif command == "/help":
+            print_help()
+        
+        elif command == "/exit":
+            print("Exiting.")
+            rag_server.stop()
+            llm_server.stop_all_processes()
+            break
+        
+        elif command == "/editllm":
+            if len(args) != 3:
+                print("Usage: /editllm <Name of the llm config set> <name of the value> <New value>")
+            else:
+                config_set, key, value = args
+                llm_server.edit_llm_conf(config_set, key, value)
 
-    def create_process(self, name, executable_path, *args):
-        if name in self.processes:
-            print(f"Process with name '{name}' already exists.")
-            return
+        elif command == "/editconf":
+            if len(args) != 2:
+                print("Usage: /editconf <Name of the key> <New value>")
+            else:
+                key, value = args
+                llm_server.edit_llm_server_conf(key, value)
 
-        # Start the process in a new process group so we can kill all children
-        if self.use_python_server_lib:
-            # Use python bindings instead of binaries
-            process = subprocess.Popen([
-                                sys.executable,
-                                "-m", "llama_cpp.server",
-                                "--model", self.args_dict["--model"],
-                                "--port", self.args_dict["--port"],
-                            ], preexec_fn=os.setsid)
-            self.processes[name] = process
+        elif command == "/newllm":
+            if len(args) != 1:
+                print("Usage: /newllm <Name>")
+            else:
+                new_name = args[0]
+                llm_server.create_new_llm_config(new_name)
 
-        else:
-            # Check app file if python lib is not activated
-            if not os.path.exists(self.target_server_app ):
-                print("Error: llama-server executable file not found.")
-                return
+        elif command == "/deletellm":
+            if len(args) != 1:
+                print("Usage: /deletellm <Name>")
+            else:
+                del_name = args[0]
+                llm_server.delete_llm_config(del_name)
 
-            process = subprocess.Popen([executable_path, *args], preexec_fn=os.setsid)
-            self.processes[name] = process
+        elif command == "/renamellm":
+            if len(args) != 2:
+                print("Usage: /renamellm <Old name> <New name>")
+            else:
+                old_name, new_name = args
+                llm_server.rename_llm_config(old_name, new_name)
 
-        print(f"Process '{name}' started with PID {process.pid}.")
-        self.update_process_list_file()
+        elif command == "/showllmconf":
+            if len(args) != 1:
+                print("Usage: /showllmconf <Name>")
+            else:
+                config_set = args[0]
+                llm_server.show_llm_config(config_set)
 
-    def stop_process(self, name):
-        if name not in self.processes:
-            print(f"No process found with name '{name}'.")
-            return
+        elif command == "/showllmserverconf":
+            llm_server.show_llm_server_config()
+        
+        elif command == "/showkickstartconf":
+            print("Parameters in kickstart_config.json:")
+            for k, v in kickstart_config.items():
+                print(f"  {k}: {v}")
 
-        process = self.processes[name]
-        if process.poll() is None:
+        elif command == "/ragupdatefile":
+            if len(args) != 1:
+                print("Usage: /ragupdatefile <Path to PDF or txt file>")
+            else:
+                import_path = args[0]
+                try:
+                    if not os.path.exists(import_path):
+                        print("Error: Document file not found.")
+                        continue
+                    
+                    # Init temporary RAG system with file
+                    payload = {"document_path": import_path}
+                    response = requests.post(f"{rag_proxy_url}/v1/ragupdatepdf", json=payload)
+
+                    print(f"-> RAG server status response: {response.json()["status"]}")
+                       
+                except Exception as e:
+                    print(f"-> Failed to init RAG system: {e}")
+
+        elif command == "/ragupdatewebsite":
+            if len(args) != 2:
+                print("Usage: /ragupdatewebsite <URL to website> <crawl ref depth>")
+            else:
+                url, crawl_depth = args
+                try:
+                    # Init temporary RAG system with web page content
+                    pass
+                       
+                except Exception as e:
+                    print(f"-> Failed to init RAG system: {e}")
+
+        elif command == "/disablerag":
+            # Disable a temporary RAG system
             try:
-                # Kill the entire process group
-                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                process.wait(timeout=5)
-                print(f"Process '{name}' with PID {process.pid} has been stopped.")
+                response = requests.get(f"{rag_proxy_url}/v1/disablerag")
+
+                print(f"-> RAG server status response: {response.json()["status"]}")
+                    
             except Exception as e:
-                print(f"Failed to kill process group for '{name}': {e}")
+                print(f"-> Failed to turn off RAG system: {e}")
+
         else:
-            print(f"Process '{name}' is not running.")
-        del self.processes[name]
-        self.update_process_list_file()
+            print(f"Unknown command: {command}. Type /help for available commands.")
 
-    def restart_process(self, name, target, *args):
-        self.stop_process(name)
-        self.create_endpoint(name)
-        self.update_process_list_file()
-
-    def stop_all_processes(self):
-        names = list(self.processes.keys())
-        for name in names:
-            self.stop_process(name)
-        self.update_process_list_file()
-    
-    def list_processes(self):
-        if len(self.processes.items()) > 0:
-            for name, process in self.processes.items():
-                status = "running" if process.poll() is None else "stopped"
-                print(f"- Process '{name}': PID {process.pid}, Status: {status}")
-        else:
-            print("- no processes currently running -")
-
-        self.update_process_list_file()
-
-    def update_process_list_file(self):
-        process_list = {
-            name: {
-                "pid": process.pid,
-                "status": "running" if process.poll() is None else "stopped"
-            }
-            for name, process in self.processes.items()
-        }
-        with open(self.proc_list, "w") as file:
-            json.dump(process_list, file, indent=4)
-            
+# ----------------------------
+# Run main application
+# ----------------------------
+if __name__ == "__main__":
+    init()
+    main_app()
