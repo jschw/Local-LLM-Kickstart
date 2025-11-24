@@ -214,10 +214,6 @@ def main_app():
             else:
                 import_path = args[0]
                 try:
-                    if not os.path.exists(import_path):
-                        print("Error: Document file not found.")
-                        continue
-                    
                     # Init temporary RAG system with file
                     payload = {"document_path": import_path}
                     response = requests.post(f"{rag_proxy_url}/v1/ragupdatepdf", json=payload)

@@ -19,6 +19,9 @@ class LocalLLMServer:
         self.target_server_app      = ""
         self.use_python_server_lib  = False
 
+        self.model_base_dir         = Path(os.path.expanduser("~/LLM_Kickstart/Models"))
+        self.model_base_dir.mkdir(parents=True, exist_ok=True)
+
         self.llm_config             = None
         self.llm_server_config      = None
         self.load_config()
@@ -81,7 +84,7 @@ class LocalLLMServer:
 
             with open(self.llm_server_config_path, "r") as f:
                 self.llm_server_config = json.load(f)
-                self.target_server_app = self.llm_server_config["llama-server-path"]
+                self.target_server_app = os.path.expanduser(self.llm_server_config["llama-server-path"])
                 self.use_python_server_lib = json.loads(str(self.llm_server_config["use-llama-server-python"]).lower())
 
                 # Check app file if python lib is not activated
@@ -270,6 +273,8 @@ class LocalLLMServer:
                     self.args_dict[arg_key] = True
                 # if false, skip adding the flag
             else:
+                if arg_key == "--model":
+                    value = os.path.join(self.model_base_dir, str(value))
                 args.append(arg_key)
                 args.append(str(value))
                 self.args_dict[arg_key] = value

@@ -20,7 +20,7 @@ class LocalRAGServer:
         CONFIG_DIR                  = Path(appdirs.user_config_dir(appname='LLM_Kickstart'))
         self.rag_server_config_path = CONFIG_DIR / 'rag_server_config.json'
         self.rag_server_config      = None
-        self.doc_base_dir           = os.path.expanduser("~/LLM_Kickstart_Documents")
+        self.doc_base_dir           = Path(os.path.expanduser("~/LLM_Kickstart/Documents"))
         self.website_crawl_depth    = 1
         self.rag_chunk_count        = 4
         self.rag_proxy_serve_port   = 0
@@ -37,9 +37,10 @@ class LocalRAGServer:
                 # Create llm config file if not existing
                 # Template content of the llm_server_config.json
                 tmp_rag_server_config = {
-                    "rag-document-base-dir": "~/LLM_Kickstart_Documents",
+                    "rag-document-base-dir": "~/LLM_Kickstart/Documents",
                     "website-crawl-depth": "2",
                     "rag-chunk-count": "5",
+                    "enable-query-optimization": "False",
                     "rag-proxy-serve-port": "4001",
                     "llm-server-port": "4000"
                     }
@@ -54,6 +55,7 @@ class LocalRAGServer:
                 self.doc_base_dir           = Path(os.path.expanduser(self.rag_server_config["rag-document-base-dir"]))
                 self.website_crawl_depth    = int(self.rag_server_config["website-crawl-depth"])
                 self.rag_chunk_count        = int(self.rag_server_config["rag-chunk-count"])
+                self.enable_query_opt       = json.loads(str(self.rag_server_config["enable-query-optimization"]).lower())
 
         except Exception as e:
             print(f"Failed to load config file {self.rag_server_config_path}: {e}")
@@ -112,9 +114,25 @@ class LocalRAGServer:
             rag_enabled = False
 
             return {"status": "success"}
+        
+        def rag_update_file(document_path):
+            # Check document exist
+            if not os.path.isfile(document_path):
+                # Document is not available at absolute path, checking rel. path
+                document_path = os.path.join(self.doc_base_dir, document_path)
+                if not os.path.isfile(document_path):
+                    # Document is not available -> return error
+                    rag_enabled = False
+                    print("--> Document not found, RAG system disabled.")
+                    return {"status": "failed"}
+
+            # Update RAG
+            rag_update_ok = rag_provider.init_vectorstore_pdf(document_path)
+            return rag_update_ok
 
         @app.post("/v1/ragupdatepdf")
         async def rag_update_pdf(request: Request):
+            nonlocal rag_enabled
             """
             Accepts a JSON body containing 'document_path',
             loads the PDF, and registers it in a RAG index.
@@ -123,10 +141,8 @@ class LocalRAGServer:
 
             document_path = body.get("document_path")
 
-            # Update RAG
-            rag_update_ok = rag_provider.init_vectorstore_pdf(document_path)
+            rag_update_ok = rag_update_file(document_path)
 
-            nonlocal rag_enabled
             if rag_update_ok:
                 rag_enabled = True
                 print("--> RAG update successful, RAG system enabled.")
@@ -149,7 +165,7 @@ class LocalRAGServer:
                     id=response_id,
                     object="chat.completion.chunk",
                     created=int(time.time()),
-                    model="gpt-4o-mini",
+                    model="generic",
                     choices=[
                         Choice(
                             index=0,
@@ -158,7 +174,7 @@ class LocalRAGServer:
                         )
                     ]
                 )
-                yield chunk_obj  # Yield chunk object (acts as stream)
+                yield chunk_obj
                 time.sleep(0.1)  # simulate streaming delay
         
         async def event_generator(generator):
@@ -179,15 +195,82 @@ class LocalRAGServer:
 
                 stream = payload.get("stream", False)
 
-                if last_user_message == "/testmessage":
+                # ==== Start command control sequence ====
+                
+                tokens = last_user_message.split()
+                command = tokens[0].lower()
+                args = tokens[1:]
+
+                if command == "/testmessage":
                     # send back test message
                     stream_response = generate_chat_completion_chunks("This is a test response answering your testmessage!")
                     return EventSourceResponse(event_generator(stream_response))
+                
+                if command == "/chatwithfile":
+                    if len(args) != 1:
+                        stream_response = generate_chat_completion_chunks("Usage: /chatwithfile <Path to PDF or txt file>")
+                        return EventSourceResponse(event_generator(stream_response))
+                   
+                    else:
+                        rag_update_ok = rag_update_file(args[0])
+
+                        if rag_update_ok:
+                            rag_enabled = True
+                            stream_response = generate_chat_completion_chunks(f"Ready, you can now chat with {args[0]}!")
+                            return EventSourceResponse(event_generator(stream_response))
+                        else:
+                            rag_enabled = False
+                            stream_response = generate_chat_completion_chunks(f"There was an error while reading the document {args[0]}, please try again.")
+                            return EventSourceResponse(event_generator(stream_response))
+                        
+                # ========================================
 
                 if rag_enabled:
                     # --- Inject RAG context before forwarding ---
+
+                    search_query = last_user_message
+
+                    # Optimize query if enabled
+                    if self.enable_query_opt:
+                        print("--> Starting query optimization.")
+
+                        instructions_query_opt =   f"""Task:\n
+                            - You are a query optimization assistant.\n
+                            - Your goal is to transform a user’s natural-language query into a rewritten query that is optimized for semantic similarity search in a vector database.\n
+                            Rewrite Requirements:\n
+                            - Preserve the user’s intent.\n
+                            - Identify the focus topic of the users input and reduce the query to this topic\n
+                            - Make it more specific, detailed, and semantically rich.\n
+                            - Add related key concepts, synonyms, and domain-specific terminology.\n
+                            - Use concise phrases, not full sentences.\n
+                            - Remove conversational filler (e.g., “Can you tell me…”).\n
+                            Output Format:\n
+                            - Provide only the rewritten query—no explanations or extra text.\n
+                            User Query:\n
+                            {search_query}\n
+                            Optimized Similarity Search Query:\n"""
+                        
+                        input_msg_query_opt = [
+                                {
+                                    "role": "user",
+                                    "content": instructions_query_opt,
+                                }
+                            ]
+                        
+                        response_query_opt = client.chat.completions.create(
+                                                model=payload.get("model", "generic"),
+                                                messages=input_msg_query_opt,
+                                                stream=False,
+                                                temperature=0.1,
+                                            )
+
+                        search_query = response_query_opt.choices[0].message.content
+
+                        print(f"--> Optimized search query: {search_query}")
+                        
+
                     # Query Vectorstore
-                    rag_output = rag_provider.search_knn(last_user_message, num_chunks=6)
+                    rag_output = rag_provider.search_knn(search_query, num_chunks=6)
 
                     rag_context = "The following parts of a document or website should be considered when generating responses and/or answers to the users questions:\n"
 
