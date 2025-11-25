@@ -8,7 +8,9 @@ from pathlib import Path
 
 
 class LocalLLMServer:
-    def __init__(self):
+    def __init__(self, termux_paths=False):
+        self.termux = termux_paths
+
         CONFIG_DIR = Path(appdirs.user_config_dir(appname='LLM_Kickstart'))
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -19,7 +21,11 @@ class LocalLLMServer:
         self.target_server_app      = ""
         self.use_python_server_lib  = False
 
-        self.model_base_dir         = Path(os.path.expanduser("~/LLM_Kickstart/Models"))
+        if self.termux:
+            self.model_base_dir         = Path(os.path.expanduser("~/storage/shared/LLM_Kickstart/Models"))
+        else:
+            self.model_base_dir         = Path(os.path.expanduser("~/LLM_Kickstart/Models"))
+
         self.model_base_dir.mkdir(parents=True, exist_ok=True)
 
         self.llm_config             = None

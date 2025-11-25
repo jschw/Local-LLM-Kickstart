@@ -14,13 +14,15 @@ from utils_rag import KickstartVectorsearch
 
 class LocalRAGServer:
 
-    def __init__(self):
+    def __init__(self, termux_paths=False):
         self.process = None
+
+        self.termux = termux_paths
 
         CONFIG_DIR                  = Path(appdirs.user_config_dir(appname='LLM_Kickstart'))
         self.rag_server_config_path = CONFIG_DIR / 'rag_server_config.json'
         self.rag_server_config      = None
-        self.doc_base_dir           = Path(os.path.expanduser("~/LLM_Kickstart/Documents"))
+        self.doc_base_dir           = None
         self.website_crawl_depth    = 1
         self.rag_chunk_count        = 4
         self.rag_proxy_serve_port   = 0
@@ -36,8 +38,13 @@ class LocalRAGServer:
             if not self.rag_server_config_path.exists():
                 # Create llm config file if not existing
                 # Template content of the llm_server_config.json
+                if self.termux:
+                    doc_base_dir_tmp = "~/storage/shared/LLM_Kickstart/Documents"
+                else:
+                    doc_base_dir_tmp = "~/LLM_Kickstart/Documents"
+
                 tmp_rag_server_config = {
-                    "rag-document-base-dir": "~/LLM_Kickstart/Documents",
+                    "rag-document-base-dir": doc_base_dir_tmp,
                     "website-crawl-depth": "2",
                     "rag-chunk-count": "5",
                     "enable-query-optimization": "False",

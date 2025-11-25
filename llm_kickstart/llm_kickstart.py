@@ -76,24 +76,29 @@ def load_config():
 
 def main_app():
     parser = argparse.ArgumentParser(description="LLM Kickstart CLI - Manage inference endpoints")
+    parser.add_argument('--termux', action='store_true')
     parser.add_argument('--start', metavar='NAME', type=str, help='Start the endpoint with the given config name on startup')
     args, _ = parser.parse_known_args()
 
+    if args.termux:
+        print("--> Termux special paths enabled.")
+
     # Start modules
-    llm_server = LocalLLMServer()
-    rag_server = LocalRAGServer()
+    llm_server = LocalLLMServer(termux_paths=args.termux)
+    rag_server = LocalRAGServer(termux_paths=args.termux)
     rag_server.start()
 
     # Get config
     kickstart_config = None
     # TODO
 
-    if args.start:
-        print(f"[Startup] Starting endpoint '{args.start}'...")
-        llm_server.create_endpoint(args.start)
-
     # Start RAG proxy server
     rag_proxy_url = f"http://localhost:{rag_server.get_rag_proxy_serve_port()}"
+
+    # Autostart specified endpoint
+    if args.start:
+        print(f"--> Starting endpoint '{args.start}'...")
+        llm_server.create_endpoint(args.start)
 
     print("LLM Kickstart CLI.\nType /help for commands. Type /exit to quit.\n")
 
