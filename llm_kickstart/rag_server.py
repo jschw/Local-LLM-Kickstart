@@ -90,8 +90,11 @@ class LocalRAGServer:
             version="1.0.0"
         )
 
-        rag_provider = KickstartVectorsearch()
-        rag_enabled = False
+        rag_provider    = KickstartVectorsearch()
+        rag_enabled     = False
+        summary_enabled = False
+
+        current_rag_summary    = ""
 
         @app.get("/v1/testmessage")
         async def root():
@@ -155,6 +158,57 @@ class LocalRAGServer:
                 print("--> RAG update successful, RAG system enabled.")
             else:
                 rag_enabled = False
+                print("--> RAG update failed, RAG system disabled.")
+                return {"status": "failed"}
+
+            return {"status": "success"}
+        
+        @app.post("/v1/ragupdateweb")
+        async def rag_update_web(request: Request):
+            nonlocal rag_enabled
+            """
+            Accepts a JSON body containing 'url',
+            loads the PDF, and registers it in a RAG index.
+            """
+            body = await request.json()
+
+            target_url = body.get("url")
+
+            # TODO
+
+            '''rag_update_ok = rag_update_file(target_url)
+
+            if rag_update_ok:
+                rag_enabled = True
+                print("--> RAG update successful, RAG system enabled.")
+            else:
+                rag_enabled = False
+                print("--> RAG update failed, RAG system disabled.")
+                return {"status": "failed"}'''
+
+            return {"status": "success"}
+        
+        @app.post("/v1/summarypdf")
+        async def summary_pdf(request: Request):
+            nonlocal summary_enabled, current_rag_summary
+            """
+            Accepts a JSON body containing 'document_path',
+            loads the PDF, and registers it in a RAG index.
+            """
+            body = await request.json()
+
+            document_path = body.get("document_path")
+
+            # TODO
+            # Summary create function
+            # rag_update_ok = rag_update_file(document_path)
+            rag_update_ok = False
+
+            if rag_update_ok:
+                summary_enabled = True
+                print("--> RAG update successful, RAG system enabled.")
+            else:
+                summary_enabled = False
                 print("--> RAG update failed, RAG system disabled.")
                 return {"status": "failed"}
 

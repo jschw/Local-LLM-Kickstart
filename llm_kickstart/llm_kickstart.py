@@ -151,8 +151,8 @@ def main_app():
 
         elif command == "/getconfig":
             #print(f"  -> App config path: {app_conf_path}")
-            print(f"  -> LLM server config path: {llm_server.get_llm_server_config_path}")
-            print(f"  -> LLM config path: {llm_server.get_llm_config_path}")
+            print(f"  -> LLM server config path: {llm_server.get_llm_server_config_path()}")
+            print(f"  -> LLM config path: {llm_server.get_llm_config_path()}")
         
         elif command == "/help":
             print_help()

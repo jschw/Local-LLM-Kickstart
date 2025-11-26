@@ -81,7 +81,7 @@ class LocalLLMServer:
                 # Create llm config file if not existing
                 # Template content of the llm_server_config.json
                 tmp_llm_server_config = {
-                    "llama-server-path": "/Users/Julian/Downloads/llm_models_gguf/llama.cpp/build/bin/llama-server",
+                    "llama-server-path": "~/llama.cpp/build/bin/llama-server",
                     "use-llama-server-python": "False"
                     }
 
@@ -90,13 +90,13 @@ class LocalLLMServer:
 
             with open(self.llm_server_config_path, "r") as f:
                 self.llm_server_config = json.load(f)
-                self.target_server_app = os.path.expanduser(self.llm_server_config["llama-server-path"])
+                self.target_server_app = Path(os.path.expanduser(self.llm_server_config["llama-server-path"]))
                 self.use_python_server_lib = json.loads(str(self.llm_server_config["use-llama-server-python"]).lower())
 
                 # Check app file if python lib is not activated
                 if not self.use_python_server_lib:
                     if not os.path.exists(self.target_server_app ):
-                        print("Error: llama-server executable file not found.")
+                        print("--> Error: llama-server executable file not found.")
 
         except Exception as e:
             print(f"Failed to load config file {self.llm_server_config_path}: {e}")
@@ -256,7 +256,7 @@ class LocalLLMServer:
                 break
 
         if llm_config is None:
-            print(f"No configuration found for LLM with name '{name}'.")
+            print(f"--> No configuration found for LLM with name '{name}'.")
             return
 
         # Build command line arguments from the config
@@ -280,7 +280,19 @@ class LocalLLMServer:
                 # if false, skip adding the flag
             else:
                 if arg_key == "--model":
-                    value = os.path.join(self.model_base_dir, str(value))
+                    # Check if model is at absolute path or model base dir available
+                    model_path = str(value)
+
+                    if not os.path.isfile(model_path):
+                        model_path = os.path.join(self.model_base_dir, str(value))
+
+                        if not os.path.isfile(model_path):
+                            # Model is not available -> return error
+                            print("--> Error: Model file not found.")
+                            return
+
+                    value = model_path
+
                 args.append(arg_key)
                 args.append(str(value))
                 self.args_dict[arg_key] = value
