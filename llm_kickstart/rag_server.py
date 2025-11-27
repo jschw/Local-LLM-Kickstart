@@ -10,7 +10,7 @@ import json
 import os, appdirs, time
 import uuid
 from multiprocessing import Process
-from utils_rag import KickstartVectorsearch
+from utils_rag import KickstartVectorsearch, crawl_website
 
 class LocalRAGServer:
 
@@ -139,6 +139,13 @@ class LocalRAGServer:
             # Update RAG
             rag_update_ok = rag_provider.init_vectorstore_pdf(document_path)
             return rag_update_ok
+        
+        def rag_update_web(url):
+            # Update RAG
+            website_content = crawl_website(url, 5)
+            rag_update_ok =rag_provider.init_vectorstore_str(website_content)
+
+            return rag_update_ok
 
         @app.post("/v1/ragupdatepdf")
         async def rag_update_pdf(request: Request):
@@ -164,7 +171,7 @@ class LocalRAGServer:
             return {"status": "success"}
         
         @app.post("/v1/ragupdateweb")
-        async def rag_update_web(request: Request):
+        async def rag_update_website(request: Request):
             nonlocal rag_enabled
             """
             Accepts a JSON body containing 'url',
@@ -174,9 +181,7 @@ class LocalRAGServer:
 
             target_url = body.get("url")
 
-            # TODO
-
-            '''rag_update_ok = rag_update_file(target_url)
+            rag_update_ok = rag_update_web(target_url)
 
             if rag_update_ok:
                 rag_enabled = True
@@ -184,7 +189,7 @@ class LocalRAGServer:
             else:
                 rag_enabled = False
                 print("--> RAG update failed, RAG system disabled.")
-                return {"status": "failed"}'''
+                return {"status": "failed"}
 
             return {"status": "success"}
         
@@ -245,7 +250,7 @@ class LocalRAGServer:
 
         @app.post("/v1/chat/completions")
         async def chat_completions(request: Request):
-            nonlocal rag_enabled
+            nonlocal rag_enabled, rag_provider
             try:
                 payload = await request.json()
 
@@ -283,6 +288,22 @@ class LocalRAGServer:
                             rag_enabled = False
                             stream_response = generate_chat_completion_chunks(f"There was an error while reading the document {args[0]}, please try again.")
                             return EventSourceResponse(event_generator(stream_response))
+                        
+                if command == "/chatwithwebsite":
+                    if len(args) != 1:
+                        stream_response = generate_chat_completion_chunks("Usage: /chatwithwebsite <URL>")
+                        return EventSourceResponse(event_generator(stream_response))
+                    
+                    rag_update_ok = rag_update_web(args[0])
+
+                    if rag_update_ok:
+                        rag_enabled = True
+                        stream_response = generate_chat_completion_chunks(f"Ready, you can now chat with {args[0]}!")
+                        return EventSourceResponse(event_generator(stream_response))
+                    else:
+                        rag_enabled = False
+                        stream_response = generate_chat_completion_chunks(f"There was an error while reading the document {args[0]}, please try again.")
+                        return EventSourceResponse(event_generator(stream_response))
                         
                 # ========================================
 
