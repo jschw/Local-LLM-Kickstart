@@ -10,7 +10,7 @@ import json
 import os, appdirs, time
 import uuid
 from multiprocessing import Process
-from utils_rag import KickstartVectorsearch, crawl_website
+from utils_rag import KickstartVectorsearch
 
 class LocalRAGServer:
 
@@ -142,8 +142,7 @@ class LocalRAGServer:
         
         def rag_update_web(url):
             # Update RAG
-            website_content = crawl_website(url, 5)
-            rag_update_ok =rag_provider.init_vectorstore_str(website_content)
+            rag_update_ok = rag_provider.init_vectorstore_web(url)
 
             return rag_update_ok
 

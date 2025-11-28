@@ -6,78 +6,95 @@ import os
 import requests
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
+from urllib.parse import urljoin, urlparse
 
-def crawl_website(url: str, timeout: int) -> str :
-    print("Crawling function")
+def crawl_website(url: str, timeout: int, max_depth: int = 1) -> str:
+    """
+    Recursively crawl a website starting from `url` up to `max_depth` link depth.
+    Returns concatenated markdown content from all visited pages.
+    """
+
     DEFAULT_TARGET_CONTENT = ['article', 'div', 'main', 'p']
     strip_elements = ['a']
+    visited = set()
 
-    try:
-        print(f"- Crawling: {url}")
-        response = requests.get(url, timeout=timeout)
-    except requests.exceptions.RequestException as e:
-        print(f"-->  Request error for {url}: {e}")
-        return None
-    
-    content_type = response.headers.get('Content-Type', '')
-    print(f"Content type: {content_type}")
-
-    if 'text/html' in content_type:
-        # Create BS4 instance for parsing
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        # Strip unwanted tags
-        for script in soup(['script', 'style']):
-            script.decompose()
-
-        max_text_length = 0
-        main_content = ""
-        for tag in soup.find_all(DEFAULT_TARGET_CONTENT):
-            text_length = len(tag.get_text())
-            if text_length > max_text_length:
-                max_text_length = text_length
-                main_content = tag
-
-        content = str(main_content)
-
-        # Return if text > 0
-        if len(content) == 0:
-            return None
+    def _crawl(current_url, depth):
+        if depth > max_depth or current_url in visited:
+            return ""
+        visited.add(current_url)
+        try:
+            print(f"--> Crawling: {current_url} (depth {depth})")
+            response = requests.get(current_url, timeout=timeout)
+        except requests.exceptions.RequestException as e:
+            print(f"-->  Request error for {current_url}: {e}")
+            return ""
         
-        # Parse markdown
-        output = md(
-            content,
-            keep_inline_images_in=['td', 'th', 'a', 'figure'],
-            strip=strip_elements
-        )
-    
-        print(f'--> Success')
+        content_type = response.headers.get('Content-Type', '')
 
-        return output
+        if 'text/html' in content_type:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            for script in soup(['script', 'style']):
+                script.decompose()
 
-    elif 'text/plain' in content_type:
-        # Return if text > 0
-        if len(response.text) == 0:
-            return None
-        
-        # Parse markdown
-        output = md(
-            response.text,
-            keep_inline_images_in=['td', 'th', 'a', 'figure'],
-            strip=strip_elements
-        )
-    
-        print(f'--> Success')
+            max_text_length = 0
+            main_content = ""
+            for tag in soup.find_all(DEFAULT_TARGET_CONTENT):
+                text_length = len(tag.get_text())
+                if text_length > max_text_length:
+                    max_text_length = text_length
+                    main_content = tag
 
-        return output
-    
-    elif 'application/pdf'in content_type:
-        # TODO
-        pass
-    
-    elif 'text/html' not in content_type:
-        print(f"--> Content not text/html for {url}")
-        return None
+            content = str(main_content)
+            if len(content) == 0:
+                return ""
+
+            output = md(
+                content,
+                keep_inline_images_in=['td', 'th', 'a', 'figure'],
+                strip=strip_elements
+            )
+
+            # Recursively crawl links if depth < max_depth
+            if depth < max_depth:
+                links = set()
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    # Only follow http(s) links, resolve relative URLs
+                    joined = urljoin(current_url, href)
+                    parsed = urlparse(joined)
+                    if parsed.scheme in ['http', 'https']:
+                        links.add(joined)
+                
+                for link in links:
+                    print(f"Parsing sublink: {link}")
+                    output += "\n\n" + _crawl(link, depth + 1)
+
+            output = output.replace('\n','')
+            output = output.replace('\t','')
+            output = output.strip()
+            return output
+
+        elif 'text/plain' in content_type:
+            if len(response.text) == 0:
+                return ""
+            output = md(
+                response.text,
+                keep_inline_images_in=['td', 'th', 'a', 'figure'],
+                strip=strip_elements
+            )
+            output = output.replace('\n','')
+            output = output.replace('\t','')
+            output = output.strip()
+            return output
+
+        elif 'application/pdf' in content_type:
+            # TODO: PDF crawling not implemented
+            return ""
+        else:
+            print(f"--> Unknown content type for {current_url}.")
+            return ""
+
+    return _crawl(url, 1).strip()
 
 class KickstartVectorsearch:
     def __init__(self):
@@ -106,7 +123,7 @@ class KickstartVectorsearch:
             # Create index
             print("-> Creating vectorstore index...")
             self.vectorstore = hnswlib.Index(space='cosine', dim=384)
-            self.vectorstore.init_index(max_elements=1000, ef_construction=200, M=48)
+            self.vectorstore.init_index(max_elements=8000, ef_construction=200, M=48)
             self.vectorstore.add_items(embeddings)
 
             # Controlling the recall by setting ef
@@ -141,11 +158,16 @@ class KickstartVectorsearch:
         except:
             return False
 
-    def init_vectorstore_str(self, input, ref_depth=2):
+    def init_vectorstore_web(self, url, ref_depth=2):
         # Init vectorstore with website content
-        if self.index_vectorstore(input):
-            print("-> Vectorstore ready.")
-            return True
+        website_content = crawl_website(url, 5, max_depth=ref_depth)
+
+        if website_content is not None:
+            if self.index_vectorstore(website_content):
+                print("-> Vectorstore ready.")
+                return True
+            else:
+                return False
         else:
             return False
     
