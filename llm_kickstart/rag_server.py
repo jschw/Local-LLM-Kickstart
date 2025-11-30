@@ -28,6 +28,9 @@ class LocalRAGServer:
         self.rag_proxy_serve_port   = 0
         self.llm_server_port        = 0
 
+        self.rag_score_thresh       = 0.5
+        self.rag_max_chunks         = 10
+
         self.load_config()
 
     def load_config(self):
@@ -126,23 +129,38 @@ class LocalRAGServer:
             return {"status": "success"}
         
         def rag_update_file(document_path):
+            # Split paths if more than one
+            document_paths_arg = document_path.split(";")
+
             # Check document exist
-            if not os.path.isfile(document_path):
-                # Document is not available at absolute path, checking rel. path
-                document_path = os.path.join(self.doc_base_dir, document_path)
-                if not os.path.isfile(document_path):
-                    # Document is not available -> return error
-                    rag_enabled = False
-                    print("--> Document not found, RAG system disabled.")
-                    return {"status": "failed"}
+            document_paths_exist = []
+
+            for doc in document_paths_arg:
+                doc_current = doc
+                if not os.path.isfile(doc_current):
+                    # Document is not available at absolute path, checking rel. path
+                    doc_current = os.path.join(self.doc_base_dir, doc_current)
+                    if not os.path.isfile(doc_current):
+                        # Document is not available -> return error
+                        print(f"--> Document {doc_current} not found.")
+                        continue
+
+                document_paths_exist.append(doc_current)
+
+            if len(document_paths_exist) == 0:
+                print("--> No existing document found at given path.")
+                return False
 
             # Update RAG
-            rag_update_ok = rag_provider.init_vectorstore_pdf(document_path)
+            rag_update_ok = rag_provider.init_vectorstore_pdf(document_paths_exist)
             return rag_update_ok
         
-        def rag_update_web(url):
+        def rag_update_web(url, deep):
+            # Split paths if more than one
+            urls = url.split(";")
+
             # Update RAG
-            rag_update_ok = rag_provider.init_vectorstore_web(url)
+            rag_update_ok = rag_provider.init_vectorstore_web(urls, deep)
 
             return rag_update_ok
 
@@ -222,7 +240,7 @@ class LocalRAGServer:
             response_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
             
             # Split text into chunks
-            chunks = text.split()
+            chunks = text.splitlines(keepends=True)
             
             for i, chunk in enumerate(chunks):
                 # Create ChatCompletionChunk object
@@ -242,9 +260,29 @@ class LocalRAGServer:
                 yield chunk_obj
                 time.sleep(0.1)  # simulate streaming delay
         
-        async def event_generator(generator):
+        async def event_generator(generator, sources=None):
             for element in generator:
                 yield element.model_dump_json()
+
+            # After streaming, append sources if present
+            if sources:
+                sources_text = "\n\n---\nSources:\n" + "\n".join(sources)
+                # Yield as a final chunk in OpenAI streaming format
+                sources_chunk = ChatCompletionChunk(
+                    id=f"chatcmpl-{uuid.uuid4().hex[:24]}",
+                    object="chat.completion.chunk",
+                    created=int(time.time()),
+                    model="generic",
+                    choices=[
+                        Choice(
+                            index=0,
+                            delta=ChoiceDelta(content=sources_text),
+                            finish_reason="stop"
+                        )
+                    ]
+                )
+                yield sources_chunk.model_dump_json()
+
             yield "[DONE]"
 
         @app.post("/v1/chat/completions")
@@ -266,9 +304,21 @@ class LocalRAGServer:
                 command = tokens[0].lower()
                 args = tokens[1:]
 
-                if command == "/testmessage":
+                if command == "/help":
                     # send back test message
-                    stream_response = generate_chat_completion_chunks("This is a test response answering your testmessage!")
+                    command_list = (
+                                    "| Command | Description |\n"
+                                    "|---------|-------------|\n"
+                                    "| `/chatwithfile <filename.pdf>` | Load a PDF file and chat with it |\n"
+                                    "| `/summarize <filename.pdf or URL>` | Summarize a document or website and chat with the summary |\n"
+                                    "| `/chatwithwebsite <URL>` | Load a website and chat with it |\n"
+                                    "| `/chatwithwebsite /deep <URL>` | Load a website, visit all sublinks, and chat with it |\n"
+                                    "| `/forgetcontext` | Disable background injection of content |\n"
+                                    "| `/persist` | (Description not provided — likely enable persistent context) |\n"
+                                    "| `/enablememory` or `/disablememory` | Enable or disable memory |\n"
+                                    )
+
+                    stream_response = generate_chat_completion_chunks(command_list)
                     return EventSourceResponse(event_generator(stream_response))
                 
                 if command == "/chatwithfile":
@@ -289,26 +339,42 @@ class LocalRAGServer:
                             return EventSourceResponse(event_generator(stream_response))
                         
                 if command == "/chatwithwebsite":
-                    if len(args) != 1:
-                        stream_response = generate_chat_completion_chunks("Usage: /chatwithwebsite <URL>")
-                        return EventSourceResponse(event_generator(stream_response))
-                    
-                    rag_update_ok = rag_update_web(args[0])
+                    if "/deep" in last_user_message:
+                        # If deep flag -> args must be 2
+                        deep_crawl = True
+
+                        if len(args) != 2:
+                            stream_response = generate_chat_completion_chunks("Usage: /chatwithwebsite /deep <URL>")
+                            return EventSourceResponse(event_generator(stream_response))
+
+                        com_index = 1
+    
+                    else:
+                        deep_crawl = False
+
+                        if len(args) != 1:
+                            stream_response = generate_chat_completion_chunks("Usage: /chatwithwebsite <URL>")
+                            return EventSourceResponse(event_generator(stream_response))
+
+                        com_index = 0
+
+                    rag_update_ok = rag_update_web(args[com_index], deep_crawl)
 
                     if rag_update_ok:
                         rag_enabled = True
-                        stream_response = generate_chat_completion_chunks(f"Ready, you can now chat with {args[0]}!")
+                        stream_response = generate_chat_completion_chunks(f"Ready, you can now chat with {args[com_index]}!")
                         return EventSourceResponse(event_generator(stream_response))
                     else:
                         rag_enabled = False
-                        stream_response = generate_chat_completion_chunks(f"There was an error while reading the document {args[0]}, please try again.")
+                        stream_response = generate_chat_completion_chunks(f"There was an error while reading the document {args[com_index]}, please try again.")
                         return EventSourceResponse(event_generator(stream_response))
                         
                 # ========================================
 
+                rag_sources = None
+
                 if rag_enabled:
                     # --- Inject RAG context before forwarding ---
-
                     search_query = last_user_message
 
                     # Optimize query if enabled
@@ -351,18 +417,36 @@ class LocalRAGServer:
                         
 
                     # Query Vectorstore
-                    rag_output = rag_provider.search_knn(search_query, num_chunks=6)
+                    rag_output = rag_provider.search_knn(search_query, num_chunks=self.rag_max_chunks)
 
                     rag_context = "The following parts of a document or website should be considered when generating responses and/or answers to the users questions:\n"
+                    rag_sources = []
 
                     num = 1
-                    for chunk in rag_output:
+                    for result in rag_output:
+                        if result.get("similarity", 0) < self.rag_score_thresh:
+                            # Skip source if similarity is too low
+                            continue
+
                         rag_context += f"[\n{num}:\n"
-                        rag_context += chunk
+                        rag_context += result.get("chunk", "")
+
+                        # Include source meta info for output
+                        source_info = result.get("source_info")
+                        source_position = result.get("source_position")
+                        if source_info is not None or source_position is not None:
+                            if source_position != 0:
+                                rag_sources.append(f"{num}: {source_info}, Page: {source_position}")
+                            else:
+                                rag_sources.append(f"{num}: {source_info}")
+
                         rag_context += f"\n],\n"
                         num += 1
 
-                    rag_context += f"All of the parts of a document or website should only be used if it is helpful in answering the user's question.\n"
+                    if len(rag_sources) == 0:
+                        rag_context += f"There are no information in the document that can answer the user's question. Do not answer anything that you think it  may be correct.\n"
+                    else:
+                        rag_context += f"All of the parts of a document or website should only be used if it is helpful in answering the user's question.\n"
 
                     injected_message = {
                         "role": "user",
@@ -375,11 +459,21 @@ class LocalRAGServer:
                 # Streaming mode
                 if stream:
                     stream_response = client.chat.completions.create(**payload)
-                    return EventSourceResponse(event_generator(stream_response))
+                    return EventSourceResponse(event_generator(stream_response, rag_sources))
 
                 # Non-streaming mode
                 response = client.chat.completions.create(**payload)
-                return JSONResponse(response.model_dump_json())
+
+                # Append RAG sources
+                if rag_enabled:
+                    try:
+                        response.choices[0].message.content += "\n\n---\nSources:\n"
+                        for source in rag_sources:
+                            response.choices[0].message.content += f"{source}\n"
+                    except Exception as e:
+                        print(f"--> Failed to append RAG sources: {e}")
+
+                    return JSONResponse(response.model_dump_json())
 
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
