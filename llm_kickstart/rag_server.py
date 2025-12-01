@@ -422,6 +422,8 @@ class LocalRAGServer:
                     rag_context = "The following parts of a document or website should be considered when generating responses and/or answers to the users questions:\n"
                     rag_sources = []
 
+                    time.sleep(0.01)
+
                     num = 1
                     for result in rag_output:
                         if result.get("similarity", 0) < self.rag_score_thresh:
@@ -432,8 +434,9 @@ class LocalRAGServer:
                         rag_context += result.get("chunk", "")
 
                         # Include source meta info for output
-                        source_info = result.get("source_info")
+                        source_info     = result.get("source_info")
                         source_position = result.get("source_position")
+
                         if source_info is not None or source_position is not None:
                             if source_position != 0:
                                 rag_sources.append(f"{num}: {source_info}, Page: {source_position}")
@@ -446,7 +449,7 @@ class LocalRAGServer:
                     if len(rag_sources) == 0:
                         rag_context += f"There are no information in the document that can answer the user's question. Do not answer anything that you think it  may be correct.\n"
                     else:
-                        rag_context += f"All of the parts of a document or website should only be used if it is helpful in answering the user's question.\n"
+                        rag_context += f"All of the parts of a document or website should only be used if it is helpful in answering the user's question. Do not output filenames or URLs that may be included in the context.\n"
 
                     injected_message = {
                         "role": "user",
