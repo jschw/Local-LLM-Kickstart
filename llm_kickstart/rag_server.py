@@ -51,8 +51,10 @@ class LocalRAGServer:
                     "website-crawl-depth": "2",
                     "rag-chunk-count": "5",
                     "enable-query-optimization": "False",
-                    "rag-proxy-serve-port": "4001",
-                    "llm-server-port": "4000"
+                    "rag-proxy-server-port": "4001",
+                    "inference-endpoint-base-url": "http://localhost:4000/v1",
+                    "use-openai-public-api": "False",
+                    "openai-api-token": "mytoken"
                     }
 
                 with self.rag_server_config_path.open('w') as f:
@@ -60,31 +62,31 @@ class LocalRAGServer:
 
             with open(self.rag_server_config_path, "r") as f:
                 self.rag_server_config = json.load(f)
-                self.rag_proxy_serve_port   = self.rag_server_config["rag-proxy-serve-port"]
-                self.llm_server_port        = self.rag_server_config["llm-server-port"]
+                self.rag_proxy_serve_port   = self.rag_server_config["rag-proxy-server-port"]
+                self.endpoint_base_url      = self.rag_server_config["inference-endpoint-base-url"]
                 self.doc_base_dir           = Path(os.path.expanduser(self.rag_server_config["rag-document-base-dir"]))
                 self.website_crawl_depth    = int(self.rag_server_config["website-crawl-depth"])
                 self.rag_chunk_count        = int(self.rag_server_config["rag-chunk-count"])
                 self.enable_query_opt       = json.loads(str(self.rag_server_config["enable-query-optimization"]).lower())
+                self.use_openai_api         = json.loads(str(self.rag_server_config["use-openai-public-api"]).lower())
+                self.openai_api_token        = self.rag_server_config["openai-api-token"]
 
         except Exception as e:
             print(f"Failed to load config file {self.rag_server_config_path}: {e}")
             self.llm_server_config = None
     
     def _run_server(self):
-        endpoint_base_url = f"http://localhost:{self.llm_server_port}/v1"
-
         self.doc_base_dir.mkdir(parents=True, exist_ok=True)
 
         # Configure OpenAI API key
-        if endpoint_base_url == "":
+        if self.use_openai_api:
             client = OpenAI(
-                api_key=os.getenv("OPENAI_API_KEY")
+                api_key=self.openai_api_token
             )
         else:
             client = OpenAI(
                 api_key="dummy",  # not used locally
-                base_url=endpoint_base_url  # your proxy endpoint
+                base_url=self.endpoint_base_url  # llama.cpp server endpoint
             )
 
         app = FastAPI(
