@@ -23,12 +23,13 @@ def load_glove_embeddings(dim=100):
     target_dir  = Path(appdirs.user_config_dir(appname='LLM_Kickstart'))
     target_dir.mkdir(parents=True, exist_ok=True)
     
+    expected_file = os.path.join(target_dir, f"glove.6B.{dim}d.txt")
     
     os.makedirs(target_dir, exist_ok=True)
     zip_path = os.path.join(target_dir, "glove.6B.zip")
     
     # 1. Download if missing
-    if not os.path.exists(f"glove.6B.{dim}d.txt"):
+    if not os.path.exists(expected_file):
         print("--> Downloading GloVe embeddings...")
         url = "http://nlp.stanford.edu/data/glove.6B.zip"
         urllib.request.urlretrieve(url, zip_path)
@@ -36,7 +37,6 @@ def load_glove_embeddings(dim=100):
         print("--> GloVe already exists. Skipping download.")
     
     # 2. Extract if files missing
-    expected_file = os.path.join(target_dir, f"glove.6B.{dim}d.txt")
     if not os.path.exists(expected_file):
         print("--> Extracting GloVe files...")
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
