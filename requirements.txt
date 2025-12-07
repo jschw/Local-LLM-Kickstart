@@ -18,4 +18,4 @@ PyPDF2
 regex
 requests
 sse-starlette
-sklearn
+scikit-learn
