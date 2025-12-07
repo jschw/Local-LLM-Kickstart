@@ -84,6 +84,12 @@ class LocalRAGServer:
     def _run_server(self):
         self.doc_base_dir.mkdir(parents=True, exist_ok=True)
 
+        self.command_list = [
+            "/chatwithfile",
+            "/chatwithwebsite",
+            "/forgetcontext"
+        ]
+
         # Configure OpenAI API key
         if self.use_openai_api:
             client = OpenAI(
@@ -232,6 +238,21 @@ class LocalRAGServer:
 
                 # Get last user message
                 messages = payload.get("messages", [])
+
+                # Remove any message whose content matches a command in command list, and the following message
+                # EXCEPT if the command is in the last message.
+                i = 0
+                while i < len(messages) - 1:  # never remove the last message
+                    content = messages[i].get("content", "")
+                    if any(content.strip().startswith(cmd) for cmd in self.command_list):
+                        del messages[i]
+                        # After deletion, the next message is now at index i (unless it was the last)
+                        if i < len(messages) - 1:
+                            del messages[i]
+                        # Do not increment i, as the next message is now at the same index
+                    else:
+                        i += 1
+
                 last_message = messages[-1]  # This is a dict: {"role": "...", "content": "..."}
                 last_user_message = last_message.get("content", "")
 
@@ -253,8 +274,6 @@ class LocalRAGServer:
                                     "| `/chatwithwebsite <URL>` | Load a website and chat with it |\n"
                                     "| `/chatwithwebsite /deep <URL>` | Load a website, visit all sublinks, and chat with it |\n"
                                     "| `/forgetcontext` | Disable background injection of content |\n"
-                                    "| `/persist` | (Description not provided — likely enable persistent context) |\n"
-                                    "| `/enablememory` or `/disablememory` | Enable or disable memory |\n"
                                     )
 
                     stream_response = generate_chat_completion_chunks(command_list)
@@ -395,6 +414,11 @@ class LocalRAGServer:
 
                         return EventSourceResponse(event_generator(response_summarization))
                         
+                if command == "/forgetcontext":
+                    rag_enabled = False
+                    stream_response = generate_chat_completion_chunks("Document or website context is no longer included in chat.")
+                    return EventSourceResponse(event_generator(stream_response))
+                
                 # ========================================
 
                 rag_sources = None
