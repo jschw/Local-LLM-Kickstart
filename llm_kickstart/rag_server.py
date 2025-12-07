@@ -6,11 +6,15 @@ from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice, ChoiceDelta
 import uvicorn
 from pathlib import Path
+from urllib.parse import urlparse
+from PyPDF2 import PdfReader
 import json
 import os, appdirs, time
 import uuid
 from multiprocessing import Process
-from utils_rag import KickstartVectorsearch
+from utils_summarize import load_glove_embeddings, generate_text_summary
+from vectorstore import KickstartVectorsearch, crawl_website
+
 
 class LocalRAGServer:
 
@@ -30,6 +34,8 @@ class LocalRAGServer:
 
         self.rag_score_thresh       = 0.5
         self.rag_max_chunks         = 10
+
+        self.word_embeddings        = load_glove_embeddings(50)
 
         self.load_config()
 
@@ -97,13 +103,6 @@ class LocalRAGServer:
 
         rag_provider    = KickstartVectorsearch()
         rag_enabled     = False
-        summary_enabled = False
-
-        current_rag_summary    = ""
-
-        @app.get("/v1/testmessage")
-        async def root():
-            return {"message": "FastAPI running inside a class and started from main.py"}
 
         @app.get("/v1/models")
         async def list_models():
@@ -166,78 +165,16 @@ class LocalRAGServer:
 
             return rag_update_ok
 
-        @app.post("/v1/ragupdatepdf")
-        async def rag_update_pdf(request: Request):
-            nonlocal rag_enabled
+        def is_url(path_or_url):
             """
-            Accepts a JSON body containing 'document_path',
-            loads the PDF, and registers it in a RAG index.
+            Returns True if the input is an HTTP/HTTPS URL, False if it's a file path.
             """
-            body = await request.json()
-
-            document_path = body.get("document_path")
-
-            rag_update_ok = rag_update_file(document_path)
-
-            if rag_update_ok:
-                rag_enabled = True
-                print("--> RAG update successful, RAG system enabled.")
-            else:
-                rag_enabled = False
-                print("--> RAG update failed, RAG system disabled.")
-                return {"status": "failed"}
-
-            return {"status": "success"}
+            try:
+                result = urlparse(path_or_url)
+                return result.scheme in ("http", "https")
+            except Exception:
+                return False
         
-        @app.post("/v1/ragupdateweb")
-        async def rag_update_website(request: Request):
-            nonlocal rag_enabled
-            """
-            Accepts a JSON body containing 'url',
-            loads the PDF, and registers it in a RAG index.
-            """
-            body = await request.json()
-
-            target_url = body.get("url")
-
-            rag_update_ok = rag_update_web(target_url)
-
-            if rag_update_ok:
-                rag_enabled = True
-                print("--> RAG update successful, RAG system enabled.")
-            else:
-                rag_enabled = False
-                print("--> RAG update failed, RAG system disabled.")
-                return {"status": "failed"}
-
-            return {"status": "success"}
-        
-        @app.post("/v1/summarypdf")
-        async def summary_pdf(request: Request):
-            nonlocal summary_enabled, current_rag_summary
-            """
-            Accepts a JSON body containing 'document_path',
-            loads the PDF, and registers it in a RAG index.
-            """
-            body = await request.json()
-
-            document_path = body.get("document_path")
-
-            # TODO
-            # Summary create function
-            # rag_update_ok = rag_update_file(document_path)
-            rag_update_ok = False
-
-            if rag_update_ok:
-                summary_enabled = True
-                print("--> RAG update successful, RAG system enabled.")
-            else:
-                summary_enabled = False
-                print("--> RAG update failed, RAG system disabled.")
-                return {"status": "failed"}
-
-            return {"status": "success"}
-
         def generate_chat_completion_chunks(text):
             response_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
             
@@ -370,6 +307,93 @@ class LocalRAGServer:
                         rag_enabled = False
                         stream_response = generate_chat_completion_chunks(f"There was an error while reading the document {args[com_index]}, please try again.")
                         return EventSourceResponse(event_generator(stream_response))
+                    
+                if command == "/summarize":
+                    if len(args) != 1:
+                        stream_response = generate_chat_completion_chunks("Usage: /summarize <Path to PDF URL>")
+                        return EventSourceResponse(event_generator(stream_response))
+                   
+                    else:
+                        input_path_url = args[0]
+
+                        # Use is_url to check if input_path_url is a URL or a file path
+                        chunk_list = []
+                        if is_url(input_path_url):
+                            # Handle as URL
+                            # Crawl website
+                            print(f"-> Crawling {input_path_url}.")
+                            page_contents = crawl_website(input_path_url, 5, max_depth=1)
+
+                            if page_contents is not None and len(page_contents) > 0:
+
+                                for page_text, page_url in page_contents:
+                                    chunk_list.append(page_text)
+
+                        else:
+                            # Handle as file path
+                            doc_current = input_path_url
+
+                            if not os.path.isfile(doc_current):
+                                # Document is not available at absolute path, checking rel. path
+                                doc_current = os.path.join(self.doc_base_dir, doc_current)
+                                if not os.path.isfile(doc_current):
+                                    # Document is not available -> return error
+                                    print(f"--> Document {input_path_url} not found.")
+                                    stream_response = generate_chat_completion_chunks(f"The document {input_path_url} was not found.\nPlease enter a valid document path.")
+                                    return EventSourceResponse(event_generator(stream_response))
+
+                            # --> Read PDF pages into chunk list
+                            reader = PdfReader(doc_current)
+
+                            # Load each page's text into a list, one entry per page
+                            for page in reader.pages:
+                                text = page.extract_text()
+                                chunk_list.append(text)
+
+                        try:
+                            # Create summary
+                            print("--> Start summarization...")
+                            text_summary = generate_text_summary(chunk_list, self.word_embeddings)
+                            print("--> Generated summary chunks.")
+
+                            # Build context
+                            instructions_summarization =   f"""Task:\n
+                                - You are a summarization assistant.\n
+                                - Your goal is to write a summary of a list of given texts that represent a docuemnt.\n
+                                Rewrite Requirements:\n
+                                - Preserve the information that are given inside the texts\n
+                                - Use a neutral language that is well understandable\n
+                                - Format your summary well for goo readability\n
+                                - Do not refer to this given task\n
+                                - Write your summary as a list of points if neccessary\n
+                                - Use line breaks if neccessary for longer summaries\n
+                                - Use markdown formatting for good readability\n
+                                Output Format:\n
+                                - Provide only the summary — no explanations or extra text.\n
+                                Text list:\n
+                                {text_summary}\n
+                                Summary:\n"""
+
+                            # Invoke inference for summarization
+                            input_msg_summarization = [
+                                    {
+                                        "role": "user",
+                                        "content": instructions_summarization,
+                                    }
+                                ]
+                        
+                        
+                            response_summarization = client.chat.completions.create(
+                                                    model=payload.get("model", "generic"),
+                                                    messages=input_msg_summarization,
+                                                    stream=True,
+                                                    temperature=0.1,
+                                                )
+                        except Exception as e:
+                            stream_response = generate_chat_completion_chunks(f"There was an error while creating the summary: {str(e)}")
+                            return EventSourceResponse(event_generator(stream_response))
+
+                        return EventSourceResponse(event_generator(response_summarization))
                         
                 # ========================================
 
