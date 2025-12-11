@@ -13,6 +13,7 @@ class KickstartVectorsearch:
         self.embedding_model  = TextEmbedding('sentence-transformers/all-MiniLM-L6-v2')
         self.chunks = []
         self.chunk_metadata = []
+        self.context_list = []
 
         self.text_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=500,
@@ -20,6 +21,19 @@ class KickstartVectorsearch:
                 separators=["\n\n", "\n", ".", " ", ""]
             )
 
+    def reset_context(self):
+        self.context_list = []
+
+    def get_context(self):
+        context = ""
+        for i in self.context_list:
+            context += f"{{\n{i}\n}},\n"
+
+        return context
+    
+    def add_context(self, input):
+        self.context_list.append(input)
+    
     def index_vectorstore(self, input, chunk_metadata=None):
         try:
             # Split
@@ -101,6 +115,43 @@ class KickstartVectorsearch:
 
             except Exception as e:
                 print(f"--> Error while reading PDF: {e}")
+                continue
+
+        self.vectorstore.set_ef(50)
+
+        print("-> Vectorstore ready.")
+        return True
+    
+    def init_vectorstore_list(self, strings:list):
+        print("-> Creating vectorstore index...")
+        self.vectorstore = hnswlib.Index(space='cosine', dim=384)
+        self.vectorstore.init_index(max_elements=10000, ef_construction=200, M=48)
+
+        self.chunks = []
+        self.chunk_metadata = []
+        
+        # Loop through path list
+        for string in strings:
+            try:
+                
+                print("-> Number of chunks:", len(strings))
+
+                if len(strings) == 0:
+                    print("-> No text extracted from PDF.")
+                    return False
+
+                # Store chunks and metadata, and index
+                self.chunks += strings
+
+                # Create embeddings and index
+                print(f"-> Creating embeddings...")
+                embeddings = self.embedding_model.encode(self.chunks, normalize_embeddings=True)
+                print(f"-> Created embeddings for {len(self.chunks)} chunks.")
+
+                self.vectorstore.add_items(embeddings)
+
+            except Exception as e:
+                print(f"--> Error while creating embeddings for clipboard content: {e}")
                 continue
 
         self.vectorstore.set_ef(50)

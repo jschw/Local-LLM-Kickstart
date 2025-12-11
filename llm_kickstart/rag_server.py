@@ -14,6 +14,7 @@ import uuid
 from multiprocessing import Process
 from utils_summarize import load_glove_embeddings, generate_text_summary
 from vectorstore import KickstartVectorsearch, crawl_website
+import pyperclip
 
 
 class LocalRAGServer:
@@ -109,6 +110,7 @@ class LocalRAGServer:
 
         rag_provider    = KickstartVectorsearch()
         rag_enabled     = False
+        context_enabled = False
 
         @app.get("/v1/models")
         async def list_models():
@@ -230,9 +232,22 @@ class LocalRAGServer:
 
             yield "[DONE]"
 
+        def get_text_clipboard():
+            try:
+                content = pyperclip.paste()
+            except Exception:
+                print("Clip error")
+                return None
+
+            if content.strip() == "":
+                print("clip empty")
+                return None
+            else:
+                return content
+
         @app.post("/v1/chat/completions")
         async def chat_completions(request: Request):
-            nonlocal rag_enabled, rag_provider
+            nonlocal rag_enabled, rag_provider, context_enabled
             try:
                 payload = await request.json()
 
@@ -271,9 +286,12 @@ class LocalRAGServer:
                                     "|---------|-------------|\n"
                                     "| `/chatwithfile <filename.pdf>` | Load a PDF file and chat with it |\n"
                                     "| `/summarize <filename.pdf or URL>` | Summarize a document or website and chat with the summary |\n"
+                                    "| `/summarize /clipboard` | Summarize the contents of the clipboard and chat with the summary |\n"
                                     "| `/chatwithwebsite <URL>` | Load a website and chat with it |\n"
                                     "| `/chatwithwebsite /deep <URL>` | Load a website, visit all sublinks, and chat with it |\n"
-                                    "| `/forgetcontext` | Disable background injection of content |\n"
+                                    "| `/chatwithclipbrd` | Fetch content from clipboard and chat with the contents |\n"
+                                    "| `/addclipboard` | Add the content of the clipboard to every message in the chat |\n"
+                                    "| `/forgetcontext` | Disable background injection of every kind of content |\n"
                                     )
 
                     stream_response = generate_chat_completion_chunks(command_list)
@@ -327,17 +345,53 @@ class LocalRAGServer:
                         stream_response = generate_chat_completion_chunks(f"There was an error while reading the document {args[com_index]}, please try again.")
                         return EventSourceResponse(event_generator(stream_response))
                     
+                if command == "/chatwithclipbrd":
+                    if len(args) != 1:
+                        stream_response = generate_chat_completion_chunks("Usage: /chatwithclipbrd")
+                        return EventSourceResponse(event_generator(stream_response))
+                   
+                    else:
+                        # Handle as Clipboard content
+                        clip_content = get_text_clipboard()
+                        if clip_content != None:
+                            chunk_list = [clip_content]
+                        else:
+                            stream_response = generate_chat_completion_chunks(f"The clipboard is empty or not valid text content.")
+                            return EventSourceResponse(event_generator(stream_response))
+                        
+                    # RAG update with clipboard content
+                    # TODO
+                    
+                    if rag_update_ok:
+                        rag_enabled = True
+                        stream_response = generate_chat_completion_chunks(f"Ready, you can now chat with {args[0]}!")
+                        return EventSourceResponse(event_generator(stream_response))
+                    else:
+                        rag_enabled = False
+                        stream_response = generate_chat_completion_chunks(f"There was an error while reading the document {args[0]}, please try again.")
+                        return EventSourceResponse(event_generator(stream_response))
+                    
                 if command == "/summarize":
                     if len(args) != 1:
                         stream_response = generate_chat_completion_chunks("Usage: /summarize <Path to PDF URL>")
                         return EventSourceResponse(event_generator(stream_response))
                    
                     else:
+                        chunk_list = []
                         input_path_url = args[0]
 
+                        # Check if argument is clipboard content
+                        if "/clipboard" in input_path_url:
+                            # Handle as Clipboard content
+                            clip_content = get_text_clipboard()
+                            if clip_content != None:
+                                chunk_list = [clip_content]
+                            else:
+                                stream_response = generate_chat_completion_chunks(f"The clipboard is empty or not valid text content.")
+                                return EventSourceResponse(event_generator(stream_response))
+
                         # Use is_url to check if input_path_url is a URL or a file path
-                        chunk_list = []
-                        if is_url(input_path_url):
+                        elif is_url(input_path_url):
                             # Handle as URL
                             # Crawl website
                             print(f"-> Crawling {input_path_url}.")
@@ -388,7 +442,7 @@ class LocalRAGServer:
                                 - Use line breaks if neccessary for longer summaries\n
                                 - Use markdown formatting for good readability\n
                                 Output Format:\n
-                                - Provide only the summary — no explanations or extra text.\n
+                                - Provide only the summary - no explanations or extra text.\n
                                 Text list:\n
                                 {text_summary}\n
                                 Summary:\n"""
@@ -414,8 +468,23 @@ class LocalRAGServer:
 
                         return EventSourceResponse(event_generator(response_summarization))
                         
+                if command == "/addclipboard":
+                    # Add all clipboard content to context list
+                    context_enabled = True
+
+                    clip_content = get_text_clipboard()
+                    if clip_content != None:
+                        rag_provider.add_context(clip_content)
+                        stream_response = generate_chat_completion_chunks(f"The clipboard content was inserted into context.")
+                        return EventSourceResponse(event_generator(stream_response))
+                    else:
+                        stream_response = generate_chat_completion_chunks(f"The clipboard is empty or not valid text content.")
+                        return EventSourceResponse(event_generator(stream_response))
+                
                 if command == "/forgetcontext":
-                    rag_enabled = False
+                    rag_enabled     = False
+                    context_enabled = False
+                    rag_provider.reset_context()
                     stream_response = generate_chat_completion_chunks("Document or website context is no longer included in chat.")
                     return EventSourceResponse(event_generator(stream_response))
                 
@@ -442,7 +511,7 @@ class LocalRAGServer:
                             - Use concise phrases, not full sentences.\n
                             - Remove conversational filler (e.g., “Can you tell me…”).\n
                             Output Format:\n
-                            - Provide only the rewritten query—no explanations or extra text.\n
+                            - Provide only the rewritten query - no explanations or extra text.\n
                             User Query:\n
                             {search_query}\n
                             Optimized Similarity Search Query:\n"""
@@ -501,16 +570,34 @@ class LocalRAGServer:
                     else:
                         rag_context += f"All of the parts of a document or website should only be used if it is helpful in answering the user's question. Do not output filenames or URLs that may be included in the context.\n"
 
-                    injected_message = {
+                    '''injected_message = {
                         "role": "user",
                         "content": rag_context
-                    }
+                    }'''
 
-                    payload["messages"].insert(0, injected_message)  # insert at top
-                    # OR: payload["messages"].append(injected_message)
+                    payload["messages"][-1]["content"] += "\n" + rag_context # insert at end
+                    # payload["messages"].insert(0, injected_message)  # insert at top
+                    # payload["messages"].append(injected_message) # insert at end
 
+                if context_enabled:
+                    # Adding context if there is something
+                    current_context = rag_provider.get_context()
+
+                    if current_context != "":
+                        current_context += f"There is some additional information in the context that can help answer the user's question. Do not refer directly to this context.\n"
+
+                    '''injected_message = {
+                        "role": "user",
+                        "content": current_context
+                    }'''
+
+                    payload["messages"][-1]["content"] += "\n" + current_context # insert at end
+                    # payload["messages"].append(injected_message) # insert at end
+                    # payload["messages"].insert(0, injected_message)  # insert at top
+                
                 # Streaming mode
                 if stream:
+                    print(payload)
                     stream_response = client.chat.completions.create(**payload)
                     return EventSourceResponse(event_generator(stream_response, rag_sources))
 
