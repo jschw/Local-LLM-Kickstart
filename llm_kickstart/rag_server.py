@@ -1,19 +1,18 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sse_starlette import EventSourceResponse
+import asyncio, uvicorn
 from openai import OpenAI
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice, ChoiceDelta
-import uvicorn
 from pathlib import Path
 from urllib.parse import urlparse
 from PyPDF2 import PdfReader
 import json
-import os, appdirs, time
+import os, appdirs, time, json
 import uuid
-from multiprocessing import Process
-from utils_summarize import load_glove_embeddings, generate_text_summary
-from vectorstore import KickstartVectorsearch, crawl_website
+from multiprocessing import Process, Event
+
 import pyperclip
 
 
@@ -21,6 +20,7 @@ class LocalRAGServer:
 
     def __init__(self, termux_paths=False):
         self.process = None
+        self.shutdown_event = None
 
         self.termux = termux_paths
 
@@ -35,8 +35,6 @@ class LocalRAGServer:
 
         self.rag_score_thresh       = 0.5
         self.rag_max_chunks         = 10
-
-        self.word_embeddings        = load_glove_embeddings(50)
 
         self.load_config()
 
@@ -82,7 +80,7 @@ class LocalRAGServer:
             print(f"Failed to load config file {self.rag_server_config_path}: {e}")
             self.llm_server_config = None
     
-    def _run_server(self):
+    def _run_server(self, shutdown_event):
         self.doc_base_dir.mkdir(parents=True, exist_ok=True)
 
         self.command_list = [
@@ -108,6 +106,7 @@ class LocalRAGServer:
             version="1.0.0"
         )
 
+        from vectorstore import KickstartVectorsearch
         rag_provider    = KickstartVectorsearch()
         rag_enabled     = False
         context_enabled = False
@@ -346,29 +345,23 @@ class LocalRAGServer:
                         return EventSourceResponse(event_generator(stream_response))
                     
                 if command == "/chatwithclipbrd":
-                    if len(args) != 1:
-                        stream_response = generate_chat_completion_chunks("Usage: /chatwithclipbrd")
-                        return EventSourceResponse(event_generator(stream_response))
-                   
+
+                    # Handle as Clipboard content
+                    clip_content = get_text_clipboard()
+                    if clip_content != None:
+                        # RAG update with clipboard content
+                        rag_update_ok = rag_provider.init_vectorstore_str(clip_content)
                     else:
-                        # Handle as Clipboard content
-                        clip_content = get_text_clipboard()
-                        if clip_content != None:
-                            chunk_list = [clip_content]
-                        else:
-                            stream_response = generate_chat_completion_chunks(f"The clipboard is empty or not valid text content.")
-                            return EventSourceResponse(event_generator(stream_response))
-                        
-                    # RAG update with clipboard content
-                    # TODO
+                        stream_response = generate_chat_completion_chunks(f"The clipboard is empty or not valid text content.")
+                        return EventSourceResponse(event_generator(stream_response))
                     
                     if rag_update_ok:
                         rag_enabled = True
-                        stream_response = generate_chat_completion_chunks(f"Ready, you can now chat with {args[0]}!")
+                        stream_response = generate_chat_completion_chunks("Ready, you can now chat with the clipboard content!")
                         return EventSourceResponse(event_generator(stream_response))
                     else:
                         rag_enabled = False
-                        stream_response = generate_chat_completion_chunks(f"There was an error while reading the document {args[0]}, please try again.")
+                        stream_response = generate_chat_completion_chunks("There was an error while clipboard content, please try again.")
                         return EventSourceResponse(event_generator(stream_response))
                     
                 if command == "/summarize":
@@ -395,6 +388,7 @@ class LocalRAGServer:
                             # Handle as URL
                             # Crawl website
                             print(f"-> Crawling {input_path_url}.")
+                            from vectorstore import crawl_website
                             page_contents = crawl_website(input_path_url, 5, max_depth=1)
 
                             if page_contents is not None and len(page_contents) > 0:
@@ -426,7 +420,7 @@ class LocalRAGServer:
                         try:
                             # Create summary
                             print("--> Start summarization...")
-                            text_summary = generate_text_summary(chunk_list, self.word_embeddings)
+                            text_summary = rag_provider.generate_text_summary(chunk_list)
                             print("--> Generated summary chunks.")
 
                             # Build context
@@ -618,7 +612,24 @@ class LocalRAGServer:
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
 
-        uvicorn.run(app, host="0.0.0.0", port=int(self.rag_proxy_serve_port))
+        # Starting up uvicorn.Server
+        config = uvicorn.Config(app, host="0.0.0.0", port=int(self.rag_proxy_serve_port), loop="asyncio")
+        server = uvicorn.Server(config)
+
+        async def serve_until_event():
+            server_task = asyncio.create_task(server.serve())
+            while not shutdown_event.is_set():
+                await asyncio.sleep(0.5)
+            if server.started:
+                # Shutdown if loop was completed
+                await server.shutdown()
+                return
+            await server_task
+
+        try:
+            asyncio.run(serve_until_event())
+        except Exception as e:
+            print(f"Exception in server loop: {e}")
 
     def get_rag_proxy_serve_port(self):
         return self.rag_proxy_serve_port
@@ -626,7 +637,8 @@ class LocalRAGServer:
     def start(self):
         # Starts the server in a non-blocking separate process.
         if self.process is None or not self.process.is_alive():
-            self.process = Process(target=self._run_server, daemon=True)
+            self.shutdown_event = Event()
+            self.process = Process(target=self._run_server, args=(self.shutdown_event,))
             self.process.start()
             print(f"--> RAG server started in separate process (PID={self.process.pid})")
         else:
@@ -635,9 +647,12 @@ class LocalRAGServer:
     def stop(self):
         # Stops the server process if running.
         if self.process and self.process.is_alive():
-            print(f"--> Stopping RAG server (PID={self.process.pid})...")
-            self.process.terminate()
-            self.process.join()
-            print("--> RAG server stopped.")
-        else:
-            print("-->  No running RAG server to stop.")
+            print(f"--> Stopping RAG server (PID={self.process.pid}), sending shutdown signal...")
+            if self.shutdown_event:
+                self.shutdown_event.set()
+                self.process.join(timeout=5)
+                if self.process.is_alive():
+                    # Server process hanging -> terminate signal
+                    self.process.terminate()
+                else:
+                    print("--> RAG server stopped gracefully.")

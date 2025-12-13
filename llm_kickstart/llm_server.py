@@ -302,7 +302,7 @@ class LocalLLMServer:
 
     def create_process(self, name, executable_path, *args):
         if name in self.processes:
-            print(f"Process with name '{name}' already exists.")
+            print(f"--> Process with name '{name}' already exists.")
             return
 
         # Start the process in a new process group so we can kill all children
@@ -319,18 +319,18 @@ class LocalLLMServer:
         else:
             # Check app file if python lib is not activated
             if not os.path.exists(self.target_server_app ):
-                print("Error: llama-server executable file not found.")
+                print("--> Error: llama-server executable file not found.")
                 return
 
             process = subprocess.Popen([executable_path, *args], preexec_fn=os.setsid)
             self.processes[name] = process
 
-        print(f"Process '{name}' started with PID {process.pid}.")
+        print(f"--> Process '{name}' started with PID {process.pid}.")
         self.update_process_list_file()
 
     def stop_process(self, name):
         if name not in self.processes:
-            print(f"No process found with name '{name}'.")
+            print(f"--> No process found with name '{name}'.")
             return
 
         process = self.processes[name]
@@ -339,11 +339,11 @@ class LocalLLMServer:
                 # Kill the entire process group
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                 process.wait(timeout=5)
-                print(f"Process '{name}' with PID {process.pid} has been stopped.")
+                print(f"--> Process '{name}' with PID {process.pid} has been stopped.")
             except Exception as e:
-                print(f"Failed to kill process group for '{name}': {e}")
+                print(f"--> Failed to kill process group for '{name}': {e}")
         else:
-            print(f"Process '{name}' is not running.")
+            print(f"--> Process '{name}' is not running.")
         del self.processes[name]
         self.update_process_list_file()
 

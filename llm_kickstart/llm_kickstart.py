@@ -84,6 +84,7 @@ def main_app():
         print("--> Termux special paths enabled.")
 
     # Start modules
+    
     llm_server = LocalLLMServer(termux_paths=args.termux)
     rag_server = LocalRAGServer(termux_paths=args.termux)
     rag_server.start()
@@ -212,43 +213,6 @@ def main_app():
             print("Parameters in kickstart_config.json:")
             for k, v in kickstart_config.items():
                 print(f"  {k}: {v}")
-
-        elif command == "/ragupdatefile":
-            if len(args) != 1:
-                print("Usage: /ragupdatefile <Path to PDF or txt file>")
-            else:
-                import_path = args[0]
-                try:
-                    # Init temporary RAG system with file
-                    payload = {"document_path": import_path}
-                    response = requests.post(f"{rag_proxy_url}/v1/ragupdatepdf", json=payload)
-
-                    print(f"-> RAG server status response: {response.json()["status"]}")
-                       
-                except Exception as e:
-                    print(f"-> Failed to init RAG system: {e}")
-
-        elif command == "/ragupdatewebsite":
-            if len(args) != 2:
-                print("Usage: /ragupdatewebsite <URL to website> <crawl ref depth>")
-            else:
-                url, crawl_depth = args
-                try:
-                    # Init temporary RAG system with web page content
-                    pass
-                       
-                except Exception as e:
-                    print(f"-> Failed to init RAG system: {e}")
-
-        elif command == "/disablerag":
-            # Disable a temporary RAG system
-            try:
-                response = requests.get(f"{rag_proxy_url}/v1/disablerag")
-
-                print(f"-> RAG server status response: {response.json()["status"]}")
-                    
-            except Exception as e:
-                print(f"-> Failed to turn off RAG system: {e}")
 
         else:
             print(f"Unknown command: {command}. Type /help for available commands.")
