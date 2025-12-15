@@ -12,7 +12,6 @@ import json
 import os, appdirs, time, json
 import uuid
 from multiprocessing import Process, Event
-
 import pyperclip
 
 
@@ -55,7 +54,6 @@ class LocalRAGServer:
                     "rag-document-base-dir": doc_base_dir_tmp,
                     "website-crawl-depth": "2",
                     "rag-chunk-count": "5",
-                    "enable-query-optimization": "False",
                     "rag-proxy-server-port": "4001",
                     "inference-endpoint-base-url": "http://localhost:4000/v1",
                     "use-openai-public-api": "False",
@@ -72,7 +70,6 @@ class LocalRAGServer:
                 self.doc_base_dir           = Path(os.path.expanduser(self.rag_server_config["rag-document-base-dir"]))
                 self.website_crawl_depth    = int(self.rag_server_config["website-crawl-depth"])
                 self.rag_chunk_count        = int(self.rag_server_config["rag-chunk-count"])
-                self.enable_query_opt       = json.loads(str(self.rag_server_config["enable-query-optimization"]).lower())
                 self.use_openai_api         = json.loads(str(self.rag_server_config["use-openai-public-api"]).lower())
                 self.openai_api_token        = self.rag_server_config["openai-api-token"]
 
@@ -490,45 +487,6 @@ class LocalRAGServer:
                     # --- Inject RAG context before forwarding ---
                     search_query = last_user_message
 
-                    # Optimize query if enabled
-                    if self.enable_query_opt:
-                        print("--> Starting query optimization.")
-
-                        instructions_query_opt =   f"""Task:\n
-                            - You are a query optimization assistant.\n
-                            - Your goal is to transform a user’s natural-language query into a rewritten query that is optimized for semantic similarity search in a vector database.\n
-                            Rewrite Requirements:\n
-                            - Preserve the user’s intent.\n
-                            - Identify the focus topic of the users input and reduce the query to this topic\n
-                            - Make it more specific, detailed, and semantically rich.\n
-                            - Add related key concepts, synonyms, and domain-specific terminology.\n
-                            - Use concise phrases, not full sentences.\n
-                            - Remove conversational filler (e.g., “Can you tell me…”).\n
-                            Output Format:\n
-                            - Provide only the rewritten query - no explanations or extra text.\n
-                            User Query:\n
-                            {search_query}\n
-                            Optimized Similarity Search Query:\n"""
-                        
-                        input_msg_query_opt = [
-                                {
-                                    "role": "user",
-                                    "content": instructions_query_opt,
-                                }
-                            ]
-                        
-                        response_query_opt = client.chat.completions.create(
-                                                model=payload.get("model", "generic"),
-                                                messages=input_msg_query_opt,
-                                                stream=False,
-                                                temperature=0.1,
-                                            )
-
-                        search_query = response_query_opt.choices[0].message.content
-
-                        print(f"--> Optimized search query: {search_query}")
-                        
-
                     # Query Vectorstore
                     rag_output = rag_provider.search_knn(search_query, num_chunks=self.rag_max_chunks)
 
@@ -564,14 +522,7 @@ class LocalRAGServer:
                     else:
                         rag_context += f"All of the parts of a document or website should only be used if it is helpful in answering the user's question. Do not output filenames or URLs that may be included in the context.\n"
 
-                    '''injected_message = {
-                        "role": "user",
-                        "content": rag_context
-                    }'''
-
-                    payload["messages"][-1]["content"] += "\n" + rag_context # insert at end
-                    # payload["messages"].insert(0, injected_message)  # insert at top
-                    # payload["messages"].append(injected_message) # insert at end
+                    payload["messages"][-1]["content"] += "\n" + rag_context # insert at end of last user message
 
                 if context_enabled:
                     # Adding context if there is something
@@ -580,14 +531,7 @@ class LocalRAGServer:
                     if current_context != "":
                         current_context += f"There is some additional information in the context that can help answer the user's question. Do not refer directly to this context.\n"
 
-                    '''injected_message = {
-                        "role": "user",
-                        "content": current_context
-                    }'''
-
-                    payload["messages"][-1]["content"] += "\n" + current_context # insert at end
-                    # payload["messages"].append(injected_message) # insert at end
-                    # payload["messages"].insert(0, injected_message)  # insert at top
+                    payload["messages"][-1]["content"] += "\n" + current_context # insert at end of last user message
                 
                 # Streaming mode
                 if stream:

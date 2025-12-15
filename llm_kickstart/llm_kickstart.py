@@ -1,8 +1,6 @@
 import argparse
-import os, sys
 import appdirs
 from pathlib import Path
-import requests
 import json
 from llm_server import LocalLLMServer
 from rag_server import LocalRAGServer
@@ -20,7 +18,7 @@ enable_rag_server       = False
 enable_webconfig        = False
 
 def init():
-    pass
+    load_config()
 
 def print_help():
     print("""Available commands:
@@ -37,16 +35,13 @@ def print_help():
         /deletellm <Name>      Delete an LLM config set
         /renamellm <Old> <New> Rename an LLM config set
         /showllmconf <Name>   Show all parameters of the LLM config set <Name>
-        /showkickstartconf         Show all parameters in kickstart_config.json
         /showllmserverconf      Show all parameters in llm_server_config.json
-        /ragupdatefile <Path>    Read a PDF file into temp RAG system
-        /ragupdatewebsite <URL> <Crawl ref depth> Read the content of a web page to temp RAG system
-        /disablerag         Disables the temp RAG system
         /help                Show this help message
         /exit                Exit the CLI
         """)
     
 def load_config():
+    global enable_rag_server, enable_llm_server
     """
     Load and parse the kickstart_config.json file into structured variables.
     """
@@ -56,8 +51,7 @@ def load_config():
             # Template content of the llm_server_config.json
             tmp_kickstart_config = {
                 "enable-llm-server": "True",
-                "enable-rag-server": "True",
-                "enable-webconfig": "False"
+                "enable-rag-server": "True"
                 }
 
             with kickstart_config_path.open('w') as f:
@@ -67,7 +61,6 @@ def load_config():
             kickstart_config    = json.load(f)
             enable_llm_server   = json.loads(str(kickstart_config["enable-llm-server"]).lower())
             enable_rag_server   = json.loads(str(kickstart_config["enable-rag-server"]).lower())
-            enable_webconfig    = json.loads(str(kickstart_config["enable-webconfig"]).lower())
 
 
     except Exception as e:
@@ -75,6 +68,8 @@ def load_config():
         kickstart_config = None
 
 def main_app():
+    global enable_llm_server, enable_rag_server
+
     parser = argparse.ArgumentParser(description="LLM Kickstart CLI - Manage inference endpoints")
     parser.add_argument('--termux', action='store_true')
     parser.add_argument('--start', metavar='NAME', type=str, help='Start the endpoint with the given config name on startup')
@@ -86,29 +81,31 @@ def main_app():
     # Start modules
     
     llm_server = LocalLLMServer(termux_paths=args.termux)
-    rag_server = LocalRAGServer(termux_paths=args.termux)
-    rag_server.start()
+    rag_server = None
+    if enable_rag_server:
+        # Start RAG proxy server
+        rag_server = LocalRAGServer(termux_paths=args.termux)
+        rag_server.start()
+        rag_proxy_url = f"http://localhost:{rag_server.get_rag_proxy_serve_port()}"
 
     # Get config
     kickstart_config = None
-    # TODO
-
-    # Start RAG proxy server
-    rag_proxy_url = f"http://localhost:{rag_server.get_rag_proxy_serve_port()}"
 
     # Autostart specified endpoint
     if args.start:
         print(f"--> Starting endpoint '{args.start}'...")
         llm_server.create_endpoint(args.start)
 
-    print("LLM Kickstart CLI.\nType /help for commands. Type /exit to quit.\n")
+    print("----> LLM Kickstart CLI.<----\n\n")
+    print_help()
 
     while True:
         try:
             user_input = input("llm-kickstart> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting.")
-            rag_server.stop()
+            if enable_rag_server:
+                rag_server.stop()
             llm_server.stop_all_processes()
             break
 
@@ -160,7 +157,8 @@ def main_app():
         
         elif command == "/exit":
             print("Exiting.")
-            rag_server.stop()
+            if enable_rag_server:
+                rag_server.stop()
             llm_server.stop_all_processes()
             break
         
@@ -208,11 +206,6 @@ def main_app():
 
         elif command == "/showllmserverconf":
             llm_server.show_llm_server_config()
-        
-        elif command == "/showkickstartconf":
-            print("Parameters in kickstart_config.json:")
-            for k, v in kickstart_config.items():
-                print(f"  {k}: {v}")
 
         else:
             print(f"Unknown command: {command}. Type /help for available commands.")
