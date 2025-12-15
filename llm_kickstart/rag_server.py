@@ -11,6 +11,7 @@ from PyPDF2 import PdfReader
 import json
 import os, appdirs, time, json
 import uuid
+import re
 from multiprocessing import Process, Event
 import pyperclip
 
@@ -362,8 +363,24 @@ class LocalRAGServer:
                         return EventSourceResponse(event_generator(stream_response))
                     
                 if command == "/summarize":
+                    additional_prompt = ""
+                    use_add_prompt = False
+
+                    # Regex to match /prompt:"...prompt text..." at the end
+                    prompt_pattern = r'/prompt:"([^"]+)"\s*$'
+
+                    # Check if /prompt is present at the end of the message
+                    prompt_match = re.search(prompt_pattern, last_user_message)
+                    if prompt_match:
+                        additional_prompt = prompt_match.group(1)
+                        use_add_prompt = True
+                        # Remove the /prompt:"..." part from args for further processing
+                        # Remove last arg if it is /prompt:"..."
+                        if args and args[-1].startswith('/prompt:'):
+                            args = args[:-1]
+
                     if len(args) != 1:
-                        stream_response = generate_chat_completion_chunks("Usage: /summarize <Path to PDF URL>")
+                        stream_response = generate_chat_completion_chunks("Usage: /summarize <Path to PDF URL> (/prompt:\"Additional instructions for summarization\")")
                         return EventSourceResponse(event_generator(stream_response))
                    
                     else:
@@ -433,10 +450,12 @@ class LocalRAGServer:
                                 - Use line breaks if neccessary for longer summaries\n
                                 - Use markdown formatting for good readability\n
                                 Output Format:\n
-                                - Provide only the summary - no explanations or extra text.\n
-                                Text list:\n
-                                {text_summary}\n
-                                Summary:\n"""
+                                - Provide only the summary - no explanations or extra text.\n"""
+
+                            if use_add_prompt and additional_prompt:
+                                instructions_summarization += f"\nAdditional Prompt:\n{additional_prompt}\n"
+
+                            instructions_summarization += f"Text list:\n{text_summary}\nSummary:\n"
 
                             # Invoke inference for summarization
                             input_msg_summarization = [
@@ -445,7 +464,6 @@ class LocalRAGServer:
                                         "content": instructions_summarization,
                                     }
                                 ]
-                        
                         
                             response_summarization = client.chat.completions.create(
                                                     model=payload.get("model", "generic"),
