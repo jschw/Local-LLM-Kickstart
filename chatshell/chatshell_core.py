@@ -16,21 +16,22 @@ from multiprocessing import Process, Event
 import pyperclip
 
 
-class LocalRAGServer:
+class Chatshell:
 
     def __init__(self, termux_paths=False):
+        self.version = "0.1.0"
         self.process = None
         self.shutdown_event = None
 
         self.termux = termux_paths
 
-        CONFIG_DIR                  = Path(appdirs.user_config_dir(appname='LLM_Kickstart'))
-        self.rag_server_config_path = CONFIG_DIR / 'rag_server_config.json'
-        self.rag_server_config      = None
+        CONFIG_DIR                  = Path(appdirs.user_config_dir(appname='chatshell'))
+        self.chatshell_config_path  = CONFIG_DIR / 'chatshell_server_config.json'
+        self.chatshell_config       = None
         self.doc_base_dir           = None
         self.website_crawl_depth    = 1
         self.rag_chunk_count        = 4
-        self.rag_proxy_serve_port   = 0
+        self.chatshell_proxy_serve_port   = 0
         self.llm_server_port        = 0
 
         self.rag_score_thresh       = 0.5
@@ -40,42 +41,42 @@ class LocalRAGServer:
 
     def load_config(self):
         """
-        Load and parse the rag_server_config.json file into structured variables.
+        Load and parse the chatshell_config.json file into structured variables.
         """
         try:
-            if not self.rag_server_config_path.exists():
+            if not self.chatshell_config_path.exists():
                 # Create llm config file if not existing
                 # Template content of the llm_server_config.json
                 if self.termux:
-                    doc_base_dir_tmp = "~/storage/shared/LLM_Kickstart/Documents"
+                    doc_base_dir_tmp = "~/storage/shared/chatshell/Documents"
                 else:
-                    doc_base_dir_tmp = "~/LLM_Kickstart/Documents"
+                    doc_base_dir_tmp = "~/chatshell/Documents"
 
-                tmp_rag_server_config = {
+                tmp_chatshell_config = {
                     "rag-document-base-dir": doc_base_dir_tmp,
                     "website-crawl-depth": "2",
                     "rag-chunk-count": "5",
-                    "rag-proxy-server-port": "4001",
+                    "chatshell-proxy-server-port": "4001",
                     "inference-endpoint-base-url": "http://localhost:4000/v1",
                     "use-openai-public-api": "False",
                     "openai-api-token": "mytoken"
                     }
 
-                with self.rag_server_config_path.open('w') as f:
-                    json.dump(tmp_rag_server_config, f, indent=4)
+                with self.chatshell_config_path.open('w') as f:
+                    json.dump(tmp_chatshell_config, f, indent=4)
 
-            with open(self.rag_server_config_path, "r") as f:
-                self.rag_server_config = json.load(f)
-                self.rag_proxy_serve_port   = self.rag_server_config["rag-proxy-server-port"]
-                self.endpoint_base_url      = self.rag_server_config["inference-endpoint-base-url"]
-                self.doc_base_dir           = Path(os.path.expanduser(self.rag_server_config["rag-document-base-dir"]))
-                self.website_crawl_depth    = int(self.rag_server_config["website-crawl-depth"])
-                self.rag_chunk_count        = int(self.rag_server_config["rag-chunk-count"])
-                self.use_openai_api         = json.loads(str(self.rag_server_config["use-openai-public-api"]).lower())
-                self.openai_api_token        = self.rag_server_config["openai-api-token"]
+            with open(self.chatshell_config_path, "r") as f:
+                self.chatshell_config = json.load(f)
+                self.chatshell_proxy_serve_port   = self.chatshell_config["chatshell-proxy-server-port"]
+                self.endpoint_base_url      = self.chatshell_config["inference-endpoint-base-url"]
+                self.doc_base_dir           = Path(os.path.expanduser(self.chatshell_config["rag-document-base-dir"]))
+                self.website_crawl_depth    = int(self.chatshell_config["website-crawl-depth"])
+                self.rag_chunk_count        = int(self.chatshell_config["rag-chunk-count"])
+                self.use_openai_api         = json.loads(str(self.chatshell_config["use-openai-public-api"]).lower())
+                self.openai_api_token        = self.chatshell_config["openai-api-token"]
 
         except Exception as e:
-            print(f"Failed to load config file {self.rag_server_config_path}: {e}")
+            print(f"Failed to load config file {self.chatshell_config_path}: {e}")
             self.llm_server_config = None
     
     def _run_server(self, shutdown_event):
@@ -101,11 +102,11 @@ class LocalRAGServer:
         app = FastAPI(
             title="Open Prompt Proxy",
             description="A drop-in compatible OpenAI API wrapper that logs prompts and forwards requests.",
-            version="1.0.0"
+            version=self.version
         )
 
-        from vectorstore import KickstartVectorsearch
-        rag_provider    = KickstartVectorsearch()
+        from .vectorstore import ChatshellVectorsearch
+        rag_provider    = ChatshellVectorsearch()
         rag_enabled     = False
         context_enabled = False
 
@@ -237,7 +238,7 @@ class LocalRAGServer:
                 return None
 
             if content.strip() == "":
-                print("clip empty")
+                print("Clip empty")
                 return None
             else:
                 return content
@@ -553,7 +554,6 @@ class LocalRAGServer:
                 
                 # Streaming mode
                 if stream:
-                    print(payload)
                     stream_response = client.chat.completions.create(**payload)
                     return EventSourceResponse(event_generator(stream_response, rag_sources))
 
@@ -575,7 +575,7 @@ class LocalRAGServer:
                 raise HTTPException(status_code=500, detail=str(e))
 
         # Starting up uvicorn.Server
-        config = uvicorn.Config(app, host="0.0.0.0", port=int(self.rag_proxy_serve_port), loop="asyncio")
+        config = uvicorn.Config(app, host="0.0.0.0", port=int(self.chatshell_proxy_serve_port), loop="asyncio")
         server = uvicorn.Server(config)
 
         async def serve_until_event():
@@ -593,8 +593,8 @@ class LocalRAGServer:
         except Exception as e:
             print(f"Exception in server loop: {e}")
 
-    def get_rag_proxy_serve_port(self):
-        return self.rag_proxy_serve_port
+    def get_chatshell_proxy_serve_port(self):
+        return self.chatshell_proxy_serve_port
     
     def start(self):
         # Starts the server in a non-blocking separate process.

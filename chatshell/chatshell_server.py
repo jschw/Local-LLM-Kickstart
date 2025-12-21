@@ -2,19 +2,18 @@ import argparse
 import appdirs
 from pathlib import Path
 import json
-from llm_server import LocalLLMServer
-from rag_server import LocalRAGServer
+from .llm_server import LocalLLMServer
+from .chatshell_core import Chatshell
 
 # Define variables
-CONFIG_DIR = Path(appdirs.user_config_dir(appname='LLM_Kickstart'))
+CONFIG_DIR = Path(appdirs.user_config_dir(appname='chatshell'))
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-kickstart_config_path   = CONFIG_DIR / 'kickstart_config.json'
-kickstart_config        = None
+chatshell_app_config_path   = CONFIG_DIR / 'chatshell_app_config.json'
+chatshell_app_config        = None
 
 # Module config
 enable_llm_server       = False
-enable_rag_server       = False
 enable_webconfig        = False
 
 def init():
@@ -41,36 +40,33 @@ def print_help():
         """)
     
 def load_config():
-    global enable_rag_server, enable_llm_server
+    global enable_llm_server
     """
     Load and parse the kickstart_config.json file into structured variables.
     """
     try:
-        if not kickstart_config_path.exists():
+        if not chatshell_app_config_path.exists():
             # Create llm config file if not existing
             # Template content of the llm_server_config.json
             tmp_kickstart_config = {
                 "enable-llm-server": "True",
-                "enable-rag-server": "True"
                 }
 
-            with kickstart_config_path.open('w') as f:
+            with chatshell_app_config_path.open('w') as f:
                 json.dump(tmp_kickstart_config, f, indent=4)
 
-        with open(kickstart_config_path, "r") as f:
+        with open(chatshell_app_config_path, "r") as f:
             kickstart_config    = json.load(f)
             enable_llm_server   = json.loads(str(kickstart_config["enable-llm-server"]).lower())
-            enable_rag_server   = json.loads(str(kickstart_config["enable-rag-server"]).lower())
-
 
     except Exception as e:
-        print(f"Failed to load config file {kickstart_config_path}: {e}")
+        print(f"Failed to load config file {chatshell_app_config_path}: {e}")
         kickstart_config = None
 
 def main_app():
-    global enable_llm_server, enable_rag_server
+    global enable_llm_server
 
-    parser = argparse.ArgumentParser(description="LLM Kickstart CLI - Manage inference endpoints")
+    parser = argparse.ArgumentParser(description="Chatshell CLI - Manage inference endpoints")
     parser.add_argument('--termux', action='store_true')
     parser.add_argument('--start', metavar='NAME', type=str, help='Start the endpoint with the given config name on startup')
     args, _ = parser.parse_known_args()
@@ -79,14 +75,12 @@ def main_app():
         print("--> Termux special paths enabled.")
 
     # Start modules
-    
     llm_server = LocalLLMServer(termux_paths=args.termux)
-    rag_server = None
-    if enable_rag_server:
-        # Start RAG proxy server
-        rag_server = LocalRAGServer(termux_paths=args.termux)
-        rag_server.start()
-        rag_proxy_url = f"http://localhost:{rag_server.get_rag_proxy_serve_port()}"
+
+    # Start Chatshell proxy server
+    chatshell_server = Chatshell(termux_paths=args.termux)
+    chatshell_server.start()
+    chatshell_proxy_url = f"http://localhost:{chatshell_server.get_chatshell_proxy_serve_port()}"
 
     # Get config
     kickstart_config = None
@@ -101,11 +95,10 @@ def main_app():
 
     while True:
         try:
-            user_input = input("llm-kickstart> ").strip()
+            user_input = input("chatshell > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting.")
-            if enable_rag_server:
-                rag_server.stop()
+            chatshell_server.stop()
             llm_server.stop_all_processes()
             break
 
@@ -157,8 +150,7 @@ def main_app():
         
         elif command == "/exit":
             print("Exiting.")
-            if enable_rag_server:
-                rag_server.stop()
+            chatshell_server.stop()
             llm_server.stop_all_processes()
             break
         
@@ -210,9 +202,12 @@ def main_app():
         else:
             print(f"Unknown command: {command}. Type /help for available commands.")
 
+def main():
+    init()
+    main_app()
+
 # ----------------------------
 # Run main application
 # ----------------------------
 if __name__ == "__main__":
-    init()
-    main_app()
+    main()

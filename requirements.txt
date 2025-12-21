@@ -15,6 +15,7 @@ nltk
 numpy
 openai
 PyPDF2
+pyperclip
 regex
 requests
 sse-starlette

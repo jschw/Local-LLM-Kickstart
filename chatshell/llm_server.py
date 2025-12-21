@@ -11,7 +11,7 @@ class LocalLLMServer:
     def __init__(self, termux_paths=False):
         self.termux = termux_paths
 
-        CONFIG_DIR = Path(appdirs.user_config_dir(appname='LLM_Kickstart'))
+        CONFIG_DIR = Path(appdirs.user_config_dir(appname='chatshell'))
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
         self.llm_config_path        = CONFIG_DIR / 'llm_config.json'
@@ -22,9 +22,9 @@ class LocalLLMServer:
         self.use_python_server_lib  = False
 
         if self.termux:
-            self.model_base_dir         = Path(os.path.expanduser("~/storage/shared/LLM_Kickstart/Models"))
+            self.model_base_dir         = Path(os.path.expanduser("~/storage/shared/chatshell/Models"))
         else:
-            self.model_base_dir         = Path(os.path.expanduser("~/LLM_Kickstart/Models"))
+            self.model_base_dir         = Path(os.path.expanduser("~/chatshell/Models"))
 
         self.model_base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -82,7 +82,7 @@ class LocalLLMServer:
                 # Template content of the llm_server_config.json
                 tmp_llm_server_config = {
                     "llama-server-path": "~/llama.cpp/build/bin/llama-server",
-                    "use-llama-server-python": "False"
+                    "use-llama-server-python": "True"
                     }
 
                 with self.llm_server_config_path.open('w') as f:

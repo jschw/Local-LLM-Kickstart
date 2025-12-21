@@ -9,12 +9,12 @@ from nltk.tokenize import sent_tokenize
 import networkx as nx
 import numpy as np
 from light_embed import TextEmbedding
-from utils_rag import crawl_website
+from .utils_rag import crawl_website
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-class KickstartVectorsearch:
+class ChatshellVectorsearch:
     def __init__(self):
 
         # Load and initialize embedding model

@@ -3,27 +3,40 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "llm-kickstart"
+name = "chatshell"
 version = "0.1.0"
-description = "Local LLM Kickstart - An easy tool for starting local LLM inference endpoints."
+description = "Chatshell - An interactive in-chat shell for LLM-based tasks."
 authors = [
-  { name = "Julian Schweigert", email = "j-schweigert@gmx.de" }
+  { name = "Julian Schweigert", email = "julianschweigert@gmail.com" }
 ]
 readme = "README.md"
 requires-python = ">=3.8"
 
-# Minimal base dependencies (CLI baseline)
+# Minimal base dependencies
 dependencies = [
-    "appdirs"
+    "appdirs",
+    "beautifulsoup4",
+    "fastapi",
+    "hnswlib",
+    "llama-cpp-python[server]",
+    "langchain",
+    "langchain-classic",
+    "langchain-community",
+    "langchain-core",
+    "langchain-text-splitters",
+    "light-embed",
+    "markdownify",
+    "networkx",
+    "nltk",
+    "numpy",
+    "openai",
+    "PyPDF2",
+    "pyperclip",
+    "regex",
+    "requests",
+    "sse-starlette",
+    "scikit-learn"
 ]
 
-# Optional extras
-[project.optional-dependencies]
-ui = ["PyQt5>=5.15"]
-
-# Define a "cli" extra that doesn't add anything extra — just for naming convenience
-cli = []
-
 [project.scripts]
-llm-kickstart-ui = "llm_kickstart.llm_kickstart_ui:main"
-llm-kickstart-cli = "llm_kickstart.llm_kickstart_cli:main"
+chatshell-server = "chatshell.chatshell_server:main"
