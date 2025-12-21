@@ -7,3 +7,7 @@
 With `chatshell`, conversations are not just messages - they are **commands** that can retrieve context, invoke tools, orchestrate agents, and automate workflows.
 
 ---
+
+## Installation
+
+```pip install chatshell-python```
