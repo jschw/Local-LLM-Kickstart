@@ -10,6 +10,7 @@ authors = [
   { name = "Julian Schweigert", email = "julianschweigert@gmail.com" }
 ]
 readme = "README.md"
+license = { file="LICENSE" }
 requires-python = ">=3.8"
 
 # Minimal base dependencies
@@ -40,3 +41,11 @@ dependencies = [
 
 [project.scripts]
 chatshell-server = "chatshell.chatshell_server:main"
+
+[project.urls]
+Homepage = "https://github.com/jschw/chatshell"
+Repository = "https://github.com/jschw/chatshell"
+Issues = "https://github.com/jschw/chatshell/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]

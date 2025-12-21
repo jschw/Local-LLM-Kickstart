@@ -1,5 +1,6 @@
 __pycache__
 chatshell.egg-info/
 build/
+dist/
 .vscode
 .DS_Store
