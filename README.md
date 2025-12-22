@@ -11,3 +11,10 @@ With `chatshell`, conversations are not just messages - they are **commands** th
 ## Installation
 
 ```pip install chatshell-python```
+
+### Llama.cpp server
+
+####  MacOS
+- Download binaries
+- ```xattr -d com.apple.quarantine *```
+

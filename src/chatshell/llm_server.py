@@ -1,6 +1,7 @@
 import subprocess
 import os
 import signal
+import requests
 import json
 import appdirs
 import sys
@@ -20,13 +21,15 @@ class LocalLLMServer:
 
         self.target_server_app      = ""
         self.use_python_server_lib  = False
+        self.autostart_endpoint     = ""
 
         if self.termux:
-            self.model_base_dir         = Path(os.path.expanduser("~/storage/shared/chatshell/Models"))
+            self.model_base_dir     = Path(os.path.expanduser("~/storage/shared/chatshell/Models"))
         else:
-            self.model_base_dir         = Path(os.path.expanduser("~/chatshell/Models"))
+            self.model_base_dir     = Path(os.path.expanduser("~/chatshell/Models"))
 
         self.model_base_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["LLAMA_CACHE"] = str(self.model_base_dir)
 
         self.llm_config             = None
         self.llm_server_config      = None
@@ -34,6 +37,10 @@ class LocalLLMServer:
 
         self.processes              = {}
         self.output_cache           = ""  # Cache for all process output
+
+        # Start endpoint if autostart is enabled
+        if self.autostart_endpoint != "":
+            self.create_endpoint(self.autostart_endpoint)
 
         self.update_process_list_file()
 
@@ -43,29 +50,48 @@ class LocalLLMServer:
         """
         try:
             if not self.llm_config_path.exists():
-                # Create llm config file if not existing
-                # Template content of llm_config.json
-                tmp_llm_config = [
-                    {
-                        "name": "Local_LLM_Model",
-                        "ip": "",
-                        "port": "4000",
-                        "model": "llm_model.gguf",
-                        "ctx-size": "",
-                        "flash-attn": "",
-                        "no-kv-offload": "",
-                        "no-mmap": "",
-                        "cache-type-k": "",
-                        "cache-type-v": "",
-                        "n-gpu-layers": "",
-                        "lora": "",
-                        "no-context-shift": "",
-                        "api-key": ""
-                    }
-                ]
+                # Try to fetch current model catalog
+                try:
+                    print("--> Fetching model catalog from github.com/jschw/chatshell...")
 
-                with self.llm_config_path.open('w') as f:
-                    json.dump(tmp_llm_config, f, indent=4)
+                    url = "https://raw.githubusercontent.com/jschw/chatshell/main/resources/model_catalog.json"
+
+                    response = requests.get(url)
+                    response.raise_for_status()
+
+                    data_model_catalog = json.loads(response.text)
+
+                    with self.llm_config_path.open('w') as f:
+                        json.dump(data_model_catalog, f, indent=4)
+
+                except:
+                    # Create default llm config file if not existing
+                    # Template content of llm_config.json
+                    print("--> Fetching model catalog not successful, creating default file...")
+
+                    tmp_llm_config = [
+                        {
+                            "name": "Local_LLM_Model",
+                            "ip": "",
+                            "port": "4000",
+                            "model": "llm_model.gguf",
+                            "hf-repo": "",
+                            "hf-file": "",
+                            "ctx-size": "",
+                            "flash-attn": "",
+                            "no-kv-offload": "",
+                            "no-mmap": "",
+                            "cache-type-k": "",
+                            "cache-type-v": "",
+                            "n-gpu-layers": "",
+                            "lora": "",
+                            "no-context-shift": "",
+                            "api-key": ""
+                        }
+                    ]
+
+                    with self.llm_config_path.open('w') as f:
+                        json.dump(tmp_llm_config, f, indent=4)
                     
             with open(self.llm_config_path, "r") as f:
                 self.llm_config = json.load(f)
@@ -82,16 +108,18 @@ class LocalLLMServer:
                 # Template content of the llm_server_config.json
                 tmp_llm_server_config = {
                     "llama-server-path": "~/llama.cpp/build/bin/llama-server",
-                    "use-llama-server-python": "True"
+                    "use-llama-server-python": "True",
+                    "autostart-endpoint": "Gemma3_4b"
                     }
 
                 with self.llm_server_config_path.open('w') as f:
                     json.dump(tmp_llm_server_config, f, indent=4)
 
             with open(self.llm_server_config_path, "r") as f:
-                self.llm_server_config = json.load(f)
-                self.target_server_app = Path(os.path.expanduser(self.llm_server_config["llama-server-path"]))
-                self.use_python_server_lib = json.loads(str(self.llm_server_config["use-llama-server-python"]).lower())
+                self.llm_server_config      = json.load(f)
+                self.target_server_app      = Path(os.path.expanduser(self.llm_server_config["llama-server-path"]))
+                self.use_python_server_lib  = json.loads(str(self.llm_server_config["use-llama-server-python"]).lower())
+                self.autostart_endpoint     = self.llm_server_config["autostart-endpoint"]
 
                 # Check app file if python lib is not activated
                 if not self.use_python_server_lib:
@@ -184,6 +212,8 @@ class LocalLLMServer:
                 "ip": "",
                 "port": "4000",
                 "model": "llm_model.gguf",
+                "hf-repo": "",
+                "hf-file": "",
                 "ctx-size": "",
                 "flash-attn": "",
                 "no-kv-offload": "",
@@ -283,6 +313,7 @@ class LocalLLMServer:
                     # Check if model is at absolute path or model base dir available
                     model_path = str(value)
 
+                    # Checking model path absolute + relative to model base dir
                     if not os.path.isfile(model_path):
                         model_path = os.path.join(self.model_base_dir, str(value))
 
@@ -297,6 +328,11 @@ class LocalLLMServer:
                 args.append(str(value))
                 self.args_dict[arg_key] = value
 
+        # Add static parameters
+        # args.append("--models-dir")
+        # args.append(str(self.model_base_dir))
+        # self.args_dict["--models-dir"] = str(self.model_base_dir)
+
         # Start the process using create_process
         self.create_process(name, self.target_server_app, *args)
 
@@ -308,22 +344,17 @@ class LocalLLMServer:
         # Start the process in a new process group so we can kill all children
         if self.use_python_server_lib:
             # Use python bindings instead of binaries
-            process = subprocess.Popen([
-                                sys.executable,
-                                "-m", "llama_cpp.server",
-                                "--model", self.args_dict["--model"],
-                                "--port", self.args_dict["--port"],
-                            ], preexec_fn=os.setsid)
-            self.processes[name] = process
+            process = subprocess.Popen([sys.executable, "-m", "llama_cpp.server", *args], preexec_fn=os.setsid)
 
         else:
             # Check app file if python lib is not activated
             if not os.path.exists(self.target_server_app ):
                 print("--> Error: llama-server executable file not found.")
                 return
-
             process = subprocess.Popen([executable_path, *args], preexec_fn=os.setsid)
-            self.processes[name] = process
+            print(args)
+
+        self.processes[name] = process
 
         print(f"--> Process '{name}' started with PID {process.pid}.")
         self.update_process_list_file()
