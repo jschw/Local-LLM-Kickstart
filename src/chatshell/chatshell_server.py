@@ -17,7 +17,7 @@ enable_llm_server       = False
 enable_webconfig        = False
 
 def init():
-    load_config()
+    pass
 
 def print_help():
     print("""Available commands:
@@ -38,34 +38,8 @@ def print_help():
         /help                Show this help message
         /exit                Exit the CLI
         """)
-    
-def load_config():
-    global enable_llm_server
-    """
-    Load and parse the kickstart_config.json file into structured variables.
-    """
-    try:
-        if not chatshell_app_config_path.exists():
-            # Create llm config file if not existing
-            # Template content of the llm_server_config.json
-            tmp_kickstart_config = {
-                "enable-llm-server": "True",
-                }
-
-            with chatshell_app_config_path.open('w') as f:
-                json.dump(tmp_kickstart_config, f, indent=4)
-
-        with open(chatshell_app_config_path, "r") as f:
-            kickstart_config    = json.load(f)
-            enable_llm_server   = json.loads(str(kickstart_config["enable-llm-server"]).lower())
-
-    except Exception as e:
-        print(f"Failed to load config file {chatshell_app_config_path}: {e}")
-        kickstart_config = None
 
 def main_app():
-    global enable_llm_server
-
     parser = argparse.ArgumentParser(description="Chatshell CLI - Manage inference endpoints")
     parser.add_argument('--termux', action='store_true')
     parser.add_argument('--start', metavar='NAME', type=str, help='Start the endpoint with the given config name on startup')
@@ -78,7 +52,7 @@ def main_app():
     llm_server = LocalLLMServer(termux_paths=args.termux)
 
     # Start Chatshell proxy server
-    chatshell_server = Chatshell(termux_paths=args.termux)
+    chatshell_server = Chatshell(termux_paths=args.termux, llm_server_inst=llm_server)
     chatshell_server.start()
     chatshell_proxy_url = f"http://localhost:{chatshell_server.get_chatshell_proxy_serve_port()}"
 
@@ -117,7 +91,7 @@ def main_app():
             if len(args) != 1:
                 print("Usage: /start <name>")
             else:
-                llm_server.create_endpoint(args[0])
+                _ = llm_server.create_endpoint(args[0])
         
         elif command == "/stop":
             if len(args) != 1:

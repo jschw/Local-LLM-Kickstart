@@ -52,17 +52,7 @@ class LocalLLMServer:
             if not self.llm_config_path.exists():
                 # Try to fetch current model catalog
                 try:
-                    print("--> Fetching model catalog from github.com/jschw/chatshell...")
-
-                    url = "https://raw.githubusercontent.com/jschw/chatshell/main/resources/model_catalog.json"
-
-                    response = requests.get(url)
-                    response.raise_for_status()
-
-                    data_model_catalog = json.loads(response.text)
-
-                    with self.llm_config_path.open('w') as f:
-                        json.dump(data_model_catalog, f, indent=4)
+                    self.update_model_catalog()
 
                 except:
                     # Create default llm config file if not existing
@@ -109,7 +99,7 @@ class LocalLLMServer:
                 tmp_llm_server_config = {
                     "llama-server-path": "~/llama.cpp/build/bin/llama-server",
                     "use-llama-server-python": "True",
-                    "autostart-endpoint": "Gemma3_4b"
+                    "autostart-endpoint": ""
                     }
 
                 with self.llm_server_config_path.open('w') as f:
@@ -151,18 +141,42 @@ class LocalLLMServer:
         return self.llm_server_config_path
     
     def get_llm_server_config(self):
-        return self.llm_server_config_path, self.llm_server_config
+        return self.llm_server_config
 
     def get_llm_config_path(self):
         return self.llm_config_path
     
     def get_llm_config(self):
-        return self.llm_config_path, self.llm_config
+        return self.llm_config
 
     def refresh_config(self):
         self.llm_config = None
         self.llm_server_config = None
         self.load_config(llm_config_path=self.llm_config_path, llm_server_config_path=self.llm_server_config_path)
+
+    def update_model_catalog(self)->bool:
+        print("--> Fetching model catalog from github.com/jschw/chatshell...")
+
+        url = "https://raw.githubusercontent.com/jschw/chatshell/main/resources/model_catalog.json"
+
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+
+            data_model_catalog = json.loads(response.text)
+
+            with self.llm_config_path.open('w') as f:
+                json.dump(data_model_catalog, f, indent=4)
+
+            # Reload config
+            with open(self.llm_config_path, "r") as f:
+                self.llm_config = json.load(f)
+
+            return True
+
+        except:
+            print("--> Fetching model catalog failed.")
+            return False
 
     def listendpoints(self):
         print("Available LLM endpoint configs:")
@@ -200,6 +214,21 @@ class LocalLLMServer:
             print(f"Updated '{key}' in llm_server_config.json to '{value}'.")
         except Exception as e:
             print(f"Failed to update llm_server_config.json: {e}")
+
+    def set_autostart_endpoint(self, name):
+        try:
+            key = "autostart-endpoint"
+            self.llm_server_config[key] = name
+
+            with open(self.llm_server_config_path, "w") as f:
+                json.dump(self.llm_server_config, f, indent=4)
+            self.refresh_config()
+            self.autostart_endpoint = name
+
+            print(f"--> Updated '{key}' in llm_server_config.json to '{name}'.")
+
+        except Exception as e:
+            print(f"--> Failed to update llm_server_config.json: {e}")
 
     def create_new_llm_config(self, new_name):
         # Check for duplicate
@@ -270,13 +299,13 @@ class LocalLLMServer:
             except Exception as e:
                 print(f"Failed to rename LLM config set: {e}")
     
-    def create_endpoint(self, name):
+    def create_endpoint(self, name)->bool:
         """
         Start a new process running ./llama_server with parameters from the config for the given LLM name.
         """
         if self.llm_config is None:
             print("Configuration not loaded. Please call load_config() first.")
-            return
+            return False
 
         # Find the LLM config by name
         llm_config = None
@@ -287,7 +316,7 @@ class LocalLLMServer:
 
         if llm_config is None:
             print(f"--> No configuration found for LLM with name '{name}'.")
-            return
+            return False
 
         # Build command line arguments from the config
         args = []
@@ -328,13 +357,10 @@ class LocalLLMServer:
                 args.append(str(value))
                 self.args_dict[arg_key] = value
 
-        # Add static parameters
-        # args.append("--models-dir")
-        # args.append(str(self.model_base_dir))
-        # self.args_dict["--models-dir"] = str(self.model_base_dir)
-
         # Start the process using create_process
         self.create_process(name, self.target_server_app, *args)
+
+        return True
 
     def create_process(self, name, executable_path, *args):
         if name in self.processes:

@@ -18,12 +18,13 @@ import pyperclip
 
 class Chatshell:
 
-    def __init__(self, termux_paths=False):
+    def __init__(self, termux_paths=False, llm_server_inst=None):
         self.version = "0.1.0"
         self.process = None
         self.shutdown_event = None
 
-        self.termux = termux_paths
+        self.termux                 = termux_paths
+        self.llm_server_inst        = llm_server_inst
 
         CONFIG_DIR                  = Path(appdirs.user_config_dir(appname='chatshell'))
         self.chatshell_config_path  = CONFIG_DIR / 'chatshell_server_config.json'
@@ -125,15 +126,6 @@ class Chatshell:
             # OpenAI returns an OpenAIObject, which is not JSON serializable.
             # Use .to_dict() to get a serializable dictionary.
             return JSONResponse(model_list)
-
-        @app.get("/v1/disablerag")
-        async def disable_rag():
-            nonlocal rag_enabled
-            """Disables RAG functionality if a vectorestore was already initialized."""
-            print("--> RAG system disabled now.")
-            rag_enabled = False
-
-            return {"status": "success"}
         
         def rag_update_file(document_path):
             # Split paths if more than one
@@ -492,11 +484,44 @@ class Chatshell:
                         return EventSourceResponse(event_generator(stream_response))
                 
                 if command == "/forgetcontext":
+                    # Disable RAG and other inserted contexts
                     rag_enabled     = False
                     context_enabled = False
                     rag_provider.reset_context()
                     stream_response = generate_chat_completion_chunks("Document or website context is no longer included in chat.")
                     return EventSourceResponse(event_generator(stream_response))
+                
+                if command == "/updatemodels":
+                    # Fetch current version of model catalog from github
+                    pass
+
+                if command == "/startendpoint":
+                    # Starts a specific LLM endpoint
+                    if len(args) != 1:
+                        stream_response = generate_chat_completion_chunks("Usage: /startendpoint <Endpoint config name>")
+                        return EventSourceResponse(event_generator(stream_response))
+                   
+                    else:
+                        start_endpoint_ok = self.llm_server_inst.create_endpoint(args[0])
+
+                        if start_endpoint_ok:
+                            stream_response = generate_chat_completion_chunks(f"Starting LLM endpoint successful, you can now start to chat.")
+                            return EventSourceResponse(event_generator(stream_response))
+                        else:
+                            stream_response = generate_chat_completion_chunks(f"Starting LLM endpoint failed.")
+                            return EventSourceResponse(event_generator(stream_response))
+
+                if command == "/setautostartendpoint":
+                    # Set a specific LLM endpoint for autostart at application startup
+                    pass
+
+                if command == "/listendpoints":
+                    # Outputs all available LLM endpoint configs
+                    pass
+
+                if command == "/shellmode":
+                    # Activate shell mode for specific chat
+                    pass
                 
                 # ========================================
 
