@@ -97,7 +97,7 @@ class LocalLLMServer:
                 # Create llm config file if not existing
                 # Template content of the llm_server_config.json
                 tmp_llm_server_config = {
-                    "llama-server-path": "~/llama.cpp/build/bin/llama-server",
+                    "llama-server-path": "~/chatshell/Llamacpp/llama.cpp/build/bin/llama-server",
                     "use-llama-server-python": "True",
                     "autostart-endpoint": ""
                     }

@@ -1,20 +1,6 @@
 import argparse
-import appdirs
-from pathlib import Path
-import json
 from .llm_server import LocalLLMServer
 from .chatshell_core import Chatshell
-
-# Define variables
-CONFIG_DIR = Path(appdirs.user_config_dir(appname='chatshell'))
-CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-chatshell_app_config_path   = CONFIG_DIR / 'chatshell_app_config.json'
-chatshell_app_config        = None
-
-# Module config
-enable_llm_server       = False
-enable_webconfig        = False
 
 def init():
     pass
@@ -55,9 +41,6 @@ def main_app():
     chatshell_server = Chatshell(termux_paths=args.termux, llm_server_inst=llm_server)
     chatshell_server.start()
     chatshell_proxy_url = f"http://localhost:{chatshell_server.get_chatshell_proxy_serve_port()}"
-
-    # Get config
-    kickstart_config = None
 
     # Autostart specified endpoint
     if args.start:
