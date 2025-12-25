@@ -14,12 +14,13 @@ import uuid
 import re
 from multiprocessing import Process, Event
 import pyperclip
+from .llm_server import LocalLLMServer
 
 
 class Chatshell:
 
-    def __init__(self, termux_paths=False, llm_server_inst=None):
-        self.version = "0.1.0"
+    def __init__(self, termux_paths=False, llm_server_inst:LocalLLMServer=None):
+        self.version = "0.2.0"
         self.process = None
         self.shutdown_event = None
 
@@ -110,6 +111,8 @@ class Chatshell:
         rag_provider    = ChatshellVectorsearch()
         rag_enabled     = False
         context_enabled = False
+
+        llm_server = self.llm_server_inst
 
         @app.get("/v1/models")
         async def list_models():
@@ -235,9 +238,33 @@ class Chatshell:
             else:
                 return content
 
+        def endpoint_avail()->bool:
+            if self.use_openai_api == False and llm_server.process_started() == False:
+                # OpenAI endpoint turned off and no local endpoint available
+                return False
+            else:
+                return True
+            
+        def format_model_list(avail_models):
+            header = (
+                "Available LLM models:\n"
+                "| Model name | Port | Path | HF Repo | HF Repo File |\n"
+                "|------------|------|------|---------|--------------|\n"
+            )
+            rows = []
+            for model in avail_models:
+                name = model.get("name", "")
+                port = model.get("port", "")
+                path = model.get("model", "")
+                hf_repo = model.get("hf-repo", "")
+                hf_file = model.get("hf-file", "")
+                row = f"| {name} | {port} | {path} | {hf_repo} | {hf_file} |"
+                rows.append(row)
+            return header + "\n".join(rows)
+
         @app.post("/v1/chat/completions")
         async def chat_completions(request: Request):
-            nonlocal rag_enabled, rag_provider, context_enabled
+            nonlocal rag_enabled, rag_provider, context_enabled, llm_server
             try:
                 payload = await request.json()
 
@@ -377,6 +404,11 @@ class Chatshell:
                         return EventSourceResponse(event_generator(stream_response))
                    
                     else:
+                        if not endpoint_avail():
+                            # No public OpenAI connection configured and local endpoint not available
+                            stream_response = generate_chat_completion_chunks("There is no LLM inference endpoint available. Please configure first and try again.")
+                            return EventSourceResponse(event_generator(stream_response))
+                
                         chunk_list = []
                         input_path_url = args[0]
 
@@ -493,7 +525,17 @@ class Chatshell:
                 
                 if command == "/updatemodels":
                     # Fetch current version of model catalog from github
-                    pass
+                    update_models_ok = llm_server.update_model_catalog()
+
+                    if update_models_ok:
+                        # Fetch model list and output
+                        models_avail = llm_server.get_endpoints()
+                        stream_response = generate_chat_completion_chunks(format_model_list(models_avail))
+                        return EventSourceResponse(event_generator(stream_response))
+
+                    else:
+                        stream_response = generate_chat_completion_chunks(f"Updating the LLM model catalog failed.")
+                        return EventSourceResponse(event_generator(stream_response))
 
                 if command == "/startendpoint":
                     # Starts a specific LLM endpoint
@@ -502,7 +544,7 @@ class Chatshell:
                         return EventSourceResponse(event_generator(stream_response))
                    
                     else:
-                        start_endpoint_ok = self.llm_server_inst.create_endpoint(args[0])
+                        start_endpoint_ok = llm_server.create_endpoint(args[0])
 
                         if start_endpoint_ok:
                             stream_response = generate_chat_completion_chunks(f"Starting LLM endpoint successful, you can now start to chat.")
@@ -511,19 +553,64 @@ class Chatshell:
                             stream_response = generate_chat_completion_chunks(f"Starting LLM endpoint failed.")
                             return EventSourceResponse(event_generator(stream_response))
 
+                if command == "/llmstatus":
+                    # Show the current status of local LLM inference endpoints
+                    endpoint_processes = llm_server.list_processes()
+                    print(endpoint_processes)
+
+                    if len(endpoint_processes) > 0:
+                        header = (
+                            "| Inference Endpoints |\n"
+                            "|--------------|\n"
+                        )
+
+                        rows = []
+                        for endpoint in endpoint_processes:
+                            row = f"| {endpoint} |"
+                            rows.append(row)
+
+                        header = header + "\n".join(rows)
+
+                        print(header)
+
+                        stream_response = generate_chat_completion_chunks(header)
+                    else:
+                        stream_response = generate_chat_completion_chunks("There are currently no running LLM inference endpoints.")
+
+                    return EventSourceResponse(event_generator(stream_response))
+                
                 if command == "/setautostartendpoint":
                     # Set a specific LLM endpoint for autostart at application startup
-                    pass
+                    if len(args) != 1:
+                        stream_response = generate_chat_completion_chunks("Usage: /setautostartendpoint <LLM endpoint name>")
+                        return EventSourceResponse(event_generator(stream_response))
+                   
+                    else:
+                        set_as_endpoint_ok = self.llm_server_inst.set_autostart_endpoint(args[0])
+
+                        if set_as_endpoint_ok:
+                            stream_response = generate_chat_completion_chunks(f"The LLM endpoint '{args[0]}' was set correcty and will be started automatically on next start of chatshell.")
+                            return EventSourceResponse(event_generator(stream_response))
+                        else:
+                            stream_response = generate_chat_completion_chunks(f"There was an error setting the LLM endpoint '{args[0]}' for automatic startup.\nEnsure that the model file exists at the path in configuration.")
+                            return EventSourceResponse(event_generator(stream_response))
 
                 if command == "/listendpoints":
                     # Outputs all available LLM endpoint configs
-                    pass
+                    models_avail = self.llm_server_inst.get_endpoints()
+                    stream_response = generate_chat_completion_chunks(format_model_list(models_avail))
+                    return EventSourceResponse(event_generator(stream_response))
 
                 if command == "/shellmode":
                     # Activate shell mode for specific chat
                     pass
                 
                 # ========================================
+
+                if not endpoint_avail():
+                    # No public OpenAI connection configured and local endpoint not available
+                    stream_response = generate_chat_completion_chunks("There is no LLM inference endpoint available. Please configure first and try again.")
+                    return EventSourceResponse(event_generator(stream_response))
 
                 rag_sources = None
 
@@ -643,3 +730,4 @@ class Chatshell:
                     self.process.terminate()
                 else:
                     print("--> RAG server stopped gracefully.")
+

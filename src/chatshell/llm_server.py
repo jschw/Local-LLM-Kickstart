@@ -36,7 +36,7 @@ class LocalLLMServer:
         self.load_config()
 
         self.processes              = {}
-        self.output_cache           = ""  # Cache for all process output
+        self.llm_process_running    = False
 
         # Start endpoint if autostart is enabled
         if self.autostart_endpoint != "":
@@ -185,6 +185,9 @@ class LocalLLMServer:
             name = config.get("name", "Unnamed LLM")
             print(f"  - {name}")
 
+    def get_endpoints(self):
+        return self.llm_config
+
     def edit_llm_conf(self, config_set, key, value):
         found = False
         for conf in self.llm_config:
@@ -215,7 +218,7 @@ class LocalLLMServer:
         except Exception as e:
             print(f"Failed to update llm_server_config.json: {e}")
 
-    def set_autostart_endpoint(self, name):
+    def set_autostart_endpoint(self, name)->bool:
         try:
             key = "autostart-endpoint"
             self.llm_server_config[key] = name
@@ -227,8 +230,11 @@ class LocalLLMServer:
 
             print(f"--> Updated '{key}' in llm_server_config.json to '{name}'.")
 
+            return True
+
         except Exception as e:
             print(f"--> Failed to update llm_server_config.json: {e}")
+            return False
 
     def create_new_llm_config(self, new_name):
         # Check for duplicate
@@ -415,15 +421,21 @@ class LocalLLMServer:
             self.stop_process(name)
         self.update_process_list_file()
     
-    def list_processes(self):
+    def list_processes(self)->list:
+        self.update_process_list_file()
+
+        processes = []
         if len(self.processes.items()) > 0:
             for name, process in self.processes.items():
                 status = "running" if process.poll() is None else "stopped"
-                print(f"- Process '{name}': PID {process.pid}, Status: {status}")
-        else:
-            print("- no processes currently running -")
+                processes.append(f"- Process '{name}': PID {process.pid}, Status: {status}")
+            print(processes)
+            return processes
 
-        self.update_process_list_file()
+        else:
+            processes.append("- no processes currently running -")
+            print(processes)
+            return processes
 
     def update_process_list_file(self):
         process_list = {
@@ -435,4 +447,22 @@ class LocalLLMServer:
         }
         with open(self.proc_list, "w") as file:
             json.dump(process_list, file, indent=4)
+
+        # Update running param
+        for name, process in self.processes.items():
+            if process.poll() != None:
+                # Process is running
+                self.process_started = True
+
+    def process_started(self):
+        if len(self.processes.items()) > 0:
+            for name, process in self.processes.items():
+                if process.poll() != None:
+                    # Process is running
+                    self.process_started = True
+                    return True
+        else:
+            return False
+
+        
             

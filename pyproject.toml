@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chatshell-python"
-version = "0.1.0"
+version = "0.2.0"
 description = "Chatshell - An interactive in-chat shell for LLM-based tasks."
 authors = [
   { name = "Julian Schweigert", email = "julianschweigert@gmail.com" }
