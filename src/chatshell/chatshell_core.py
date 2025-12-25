@@ -80,7 +80,7 @@ class Chatshell:
         except Exception as e:
             print(f"Failed to load config file {self.chatshell_config_path}: {e}")
             self.llm_server_config = None
-    
+
     def _run_server(self, shutdown_event):
         self.doc_base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -89,6 +89,11 @@ class Chatshell:
             "/chatwithwebsite",
             "/forgetcontext"
         ]
+
+        # Start LLM server
+        llm_server                  = LocalLLMServer(termux_paths=self.termux)
+        llm_config_path        = llm_server.get_llm_config_path()
+        llm_server_config_path = llm_server.get_llm_server_config_path()
 
         # Configure OpenAI API key
         if self.use_openai_api:
@@ -111,8 +116,6 @@ class Chatshell:
         rag_provider    = ChatshellVectorsearch()
         rag_enabled     = False
         context_enabled = False
-
-        llm_server = self.llm_server_inst
 
         @app.get("/v1/models")
         async def list_models():
@@ -553,6 +556,18 @@ class Chatshell:
                             stream_response = generate_chat_completion_chunks(f"Starting LLM endpoint failed.")
                             return EventSourceResponse(event_generator(stream_response))
 
+                if command == "/restartendpoint":
+                    # Restart a certain LLM inference endpoint
+                    pass
+
+                if command == "/stopendpoint":
+                    # Stop a certain LLM inference endpoint
+                    pass
+
+                if command == "/stopallendpnts":
+                    # Stop all LLM inference endpoints
+                    pass
+                
                 if command == "/llmstatus":
                     # Show the current status of local LLM inference endpoints
                     endpoint_processes = llm_server.list_processes()
@@ -603,6 +618,10 @@ class Chatshell:
 
                 if command == "/shellmode":
                     # Activate shell mode for specific chat
+                    pass
+
+                if command == "/exit":
+                    # Quit chatshell server
                     pass
                 
                 # ========================================
