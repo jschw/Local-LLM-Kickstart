@@ -305,13 +305,13 @@ class LocalLLMServer:
             except Exception as e:
                 print(f"Failed to rename LLM config set: {e}")
     
-    def create_endpoint(self, name)->bool:
+    def create_endpoint(self, name)->list[bool, str]:
         """
         Start a new process running ./llama_server with parameters from the config for the given LLM name.
         """
         if self.llm_config is None:
-            print("Configuration not loaded. Please call load_config() first.")
-            return False
+            print("--> Configuration not loaded. Please call load_config() first.")
+            return [False, "Configuration not loaded. Please call load_config() first."]
 
         # Find the LLM config by name
         llm_config = None
@@ -322,7 +322,7 @@ class LocalLLMServer:
 
         if llm_config is None:
             print(f"--> No configuration found for LLM with name '{name}'.")
-            return False
+            return [False, f"No configuration found for LLM with name '{name}'."]
 
         # Build command line arguments from the config
         args = []
@@ -355,9 +355,13 @@ class LocalLLMServer:
                         if not os.path.isfile(model_path):
                             # Model is not available -> return error
                             print("--> Error: Model file not found.")
-                            return
+                            return [False, "Error: Model file not found."]
 
                     value = model_path
+
+                if (arg_key == "--hf-repo" or arg_key == "--hf-file") and self.use_python_server_lib:
+                    # Ignore unsupported parameters because of outdated python bindings
+                    continue
 
                 args.append(arg_key)
                 args.append(str(value))
@@ -366,7 +370,7 @@ class LocalLLMServer:
         # Start the process using create_process
         self.create_process(name, self.target_server_app, *args)
 
-        return True
+        return [True, f"Endpoint{name} started successful."]
 
     def create_process(self, name, executable_path, *args):
         if name in self.processes:
@@ -391,10 +395,10 @@ class LocalLLMServer:
         print(f"--> Process '{name}' started with PID {process.pid}.")
         self.update_process_list_file()
 
-    def stop_process(self, name):
+    def stop_process(self, name)->list[bool, str]:
         if name not in self.processes:
             print(f"--> No process found with name '{name}'.")
-            return
+            return [False, f"No process found with name '{name}'."]
 
         process = self.processes[name]
         if process.poll() is None:
@@ -402,24 +406,37 @@ class LocalLLMServer:
                 # Kill the entire process group
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                 process.wait(timeout=5)
+                del self.processes[name]
+                self.update_process_list_file()
                 print(f"--> Process '{name}' with PID {process.pid} has been stopped.")
+                return [True, f"Process '{name}' with PID {process.pid} has been stopped."]
             except Exception as e:
+                del self.processes[name]
+                self.update_process_list_file()
                 print(f"--> Failed to kill process group for '{name}': {e}")
+                return [False, f"Failed to kill process group for '{name}': {e}"]
         else:
+            del self.processes[name]
+            self.update_process_list_file()
             print(f"--> Process '{name}' is not running.")
-        del self.processes[name]
-        self.update_process_list_file()
+            return [False, f"Process '{name}' is not running."]
 
-    def restart_process(self, name, target, *args):
-        self.stop_process(name)
-        self.create_endpoint(name)
+    def restart_process(self, name)->list[bool, str]:
+        output_list = []
+        output_list.append(self.stop_process(name))
+        start_ok, output = self.create_endpoint(name)
+        output_list.append(output)
         self.update_process_list_file()
+        return [start_ok, "\n".join(output_list)]
 
-    def stop_all_processes(self):
+    def stop_all_processes(self)->list:
+        output_list = []
         names = list(self.processes.keys())
         for name in names:
-            self.stop_process(name)
+            _, output_proc = self.stop_process(name)
+            output_list.append(output_proc)
         self.update_process_list_file()
+        return output_list
     
     def list_processes(self)->list:
         self.update_process_list_file()

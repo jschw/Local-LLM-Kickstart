@@ -19,13 +19,12 @@ from .llm_server import LocalLLMServer
 
 class Chatshell:
 
-    def __init__(self, termux_paths=False, llm_server_inst:LocalLLMServer=None):
+    def __init__(self, termux_paths=False):
         self.version = "0.2.0"
         self.process = None
         self.shutdown_event = None
 
         self.termux                 = termux_paths
-        self.llm_server_inst        = llm_server_inst
 
         CONFIG_DIR                  = Path(appdirs.user_config_dir(appname='chatshell'))
         self.chatshell_config_path  = CONFIG_DIR / 'chatshell_server_config.json'
@@ -304,14 +303,28 @@ class Chatshell:
                     command_list = (
                                     "| Command | Description |\n"
                                     "|---------|-------------|\n"
-                                    "| `/chatwithfile <filename.pdf>` | Load a PDF file and chat with it |\n"
-                                    "| `/summarize <filename.pdf or URL>` | Summarize a document or website and chat with the summary |\n"
-                                    "| `/summarize /clipboard` | Summarize the contents of the clipboard and chat with the summary |\n"
+                                    "| `/help` | Show this help message |\n"
+                                    "| `/chatwithfile <filename.pdf>` | Load a PDF or text file and chat with it |\n"
                                     "| `/chatwithwebsite <URL>` | Load a website and chat with it |\n"
                                     "| `/chatwithwebsite /deep <URL>` | Load a website, visit all sublinks, and chat with it |\n"
                                     "| `/chatwithclipbrd` | Fetch content from clipboard and chat with the contents |\n"
+                                    "| `/summarize <filename.pdf or URL>` | Summarize a document or website and chat with the summary |\n"
+                                    "| `/summarize /clipboard` | Summarize the contents of the clipboard and chat with the summary |\n"
                                     "| `/addclipboard` | Add the content of the clipboard to every message in the chat |\n"
                                     "| `/forgetcontext` | Disable background injection of every kind of content |\n"
+                                    "| `/forgetall` | Disable RAG and all inserted contexts |\n"
+                                    "| `/forgetctx` | Disable inserted context only |\n"
+                                    "| `/forgetdoc` | Disable RAG (document/website context) only |\n"
+                                    "| `/updatemodels` | Update the LLM model catalog from GitHub |\n"
+                                    "| `/startendpoint <Endpoint config name>` | Start a specific LLM endpoint |\n"
+                                    "| `/restartendpoint <Endpoint config name>` | Restart a specific LLM endpoint |\n"
+                                    "| `/stopendpoint <Endpoint config name>` | Stop a specific LLM endpoint |\n"
+                                    "| `/stopallendpnts` | Stop all LLM inference endpoints |\n"
+                                    "| `/llmstatus` | Show the status of local LLM inference endpoints |\n"
+                                    "| `/setautostartendpoint <LLM endpoint name>` | Set a specific LLM endpoint for autostart |\n"
+                                    "| `/listendpoints` | List all available LLM endpoint configs |\n"
+                                    "| `/shellmode` | Activate shell mode for this chat (no LLM interaction) |\n"
+                                    "| `/exit` | Quit chatshell server |\n"
                                     )
 
                     stream_response = generate_chat_completion_chunks(command_list)
@@ -518,11 +531,24 @@ class Chatshell:
                         stream_response = generate_chat_completion_chunks(f"The clipboard is empty or not valid text content.")
                         return EventSourceResponse(event_generator(stream_response))
                 
-                if command == "/forgetcontext":
+                if command == "/forgetall":
                     # Disable RAG and other inserted contexts
                     rag_enabled     = False
                     context_enabled = False
                     rag_provider.reset_context()
+                    stream_response = generate_chat_completion_chunks("Document or website context is no longer included in chat.")
+                    return EventSourceResponse(event_generator(stream_response))
+                
+                if command == "/forgetctx":
+                    # Disable other inserted contexts
+                    context_enabled = False
+                    rag_provider.reset_context()
+                    stream_response = generate_chat_completion_chunks("Context is no longer included in chat.")
+                    return EventSourceResponse(event_generator(stream_response))
+                
+                if command == "/forgetdoc":
+                    # Disable RAG
+                    rag_enabled     = False
                     stream_response = generate_chat_completion_chunks("Document or website context is no longer included in chat.")
                     return EventSourceResponse(event_generator(stream_response))
                 
@@ -547,26 +573,41 @@ class Chatshell:
                         return EventSourceResponse(event_generator(stream_response))
                    
                     else:
-                        start_endpoint_ok = llm_server.create_endpoint(args[0])
+                        start_endpoint_ok, output = llm_server.create_endpoint(args[0])
 
-                        if start_endpoint_ok:
-                            stream_response = generate_chat_completion_chunks(f"Starting LLM endpoint successful, you can now start to chat.")
-                            return EventSourceResponse(event_generator(stream_response))
-                        else:
-                            stream_response = generate_chat_completion_chunks(f"Starting LLM endpoint failed.")
-                            return EventSourceResponse(event_generator(stream_response))
+                        stream_response = generate_chat_completion_chunks(output)
+                        return EventSourceResponse(event_generator(stream_response))
 
                 if command == "/restartendpoint":
                     # Restart a certain LLM inference endpoint
-                    pass
+                    if len(args) != 1:
+                        stream_response = generate_chat_completion_chunks("Usage: /restartendpoint <Endpoint config name>")
+                        return EventSourceResponse(event_generator(stream_response))
+                   
+                    else:
+                        start_endpoint_ok, output = llm_server.restart_process(args[0])
+
+                        stream_response = generate_chat_completion_chunks(output)
+                        return EventSourceResponse(event_generator(stream_response))
 
                 if command == "/stopendpoint":
                     # Stop a certain LLM inference endpoint
-                    pass
+                    if len(args) != 1:
+                        stream_response = generate_chat_completion_chunks("Usage: /stopendpoint <Endpoint config name>")
+                        return EventSourceResponse(event_generator(stream_response))
+                   
+                    else:
+                        stop_endpoint_ok, output = llm_server.stop_process(args[0])
+
+                        stream_response = generate_chat_completion_chunks(output)
+                        return EventSourceResponse(event_generator(stream_response))
 
                 if command == "/stopallendpnts":
                     # Stop all LLM inference endpoints
-                    pass
+                    output = llm_server.stop_all_processes()
+
+                    stream_response = generate_chat_completion_chunks("\n".join(output))
+                    return EventSourceResponse(event_generator(stream_response))
                 
                 if command == "/llmstatus":
                     # Show the current status of local LLM inference endpoints
@@ -601,7 +642,7 @@ class Chatshell:
                         return EventSourceResponse(event_generator(stream_response))
                    
                     else:
-                        set_as_endpoint_ok = self.llm_server_inst.set_autostart_endpoint(args[0])
+                        set_as_endpoint_ok = llm_server.set_autostart_endpoint(args[0])
 
                         if set_as_endpoint_ok:
                             stream_response = generate_chat_completion_chunks(f"The LLM endpoint '{args[0]}' was set correcty and will be started automatically on next start of chatshell.")
@@ -612,17 +653,23 @@ class Chatshell:
 
                 if command == "/listendpoints":
                     # Outputs all available LLM endpoint configs
-                    models_avail = self.llm_server_inst.get_endpoints()
+                    models_avail = llm_server.get_endpoints()
                     stream_response = generate_chat_completion_chunks(format_model_list(models_avail))
                     return EventSourceResponse(event_generator(stream_response))
+                
+                if command == "/status":
+                    # Outputs the status of the system overall context + RAG + LLM server
+                    # TODO
+                    pass
 
                 if command == "/shellmode":
-                    # Activate shell mode for specific chat
-                    pass
+                    # Activate shell mode for specific chat by inserting the keyword
+                    stream_response = generate_chat_completion_chunks(f"This chat is now marked as shell-chat, no LLM interaction will be performed on future inputs.")
+                    return EventSourceResponse(event_generator(stream_response))
 
                 if command == "/exit":
                     # Quit chatshell server
-                    pass
+                    quit()
                 
                 # ========================================
 
