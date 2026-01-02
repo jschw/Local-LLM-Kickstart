@@ -311,9 +311,15 @@ class Chatshell:
                         i += 1
 
                 last_message = messages[-1]  # This is a dict: {"role": "...", "content": "..."}
+                first_message = messages[0].get("content", "")
                 last_user_message = last_message.get("content", "")
 
                 stream = payload.get("stream", False)
+
+                # Set shellmode state for this request
+                shellmode_active = False
+                if first_message == "/shellmode":
+                    shellmode_active = True
 
                 # ==== Start command control sequence ====
                 
@@ -742,6 +748,10 @@ class Chatshell:
                 
                 # ========================================
 
+                if shellmode_active:
+                    stream_response = generate_chat_completion_chunks("Shell mode is enabled for this chat. You can use this chat for communication with chatshell itself - your messages are not redirected to a LLM inference endpoint.\nIf you want to communicate with an LLM, please open a new chat conversion.")
+                    return EventSourceResponse(event_generator(stream_response))
+                
                 if not endpoint_avail():
                     # No public OpenAI connection configured and local endpoint not available
                     stream_response = generate_chat_completion_chunks("There is no LLM inference endpoint available. Please configure first and try again.")
