@@ -8,14 +8,12 @@ from openai.types.chat.chat_completion_chunk import Choice, ChoiceDelta
 from pathlib import Path
 from urllib.parse import urlparse
 from PyPDF2 import PdfReader
-import json
-import os, appdirs, time, json
-import uuid
-import re
+import os, appdirs, time, json, uuid, re
 from datetime import datetime
 from multiprocessing import Process, Event
 import pyperclip
 from .llm_server import LocalLLMServer
+from .context_manager import ContextManager
 
 
 class Chatshell:
@@ -112,15 +110,11 @@ class Chatshell:
             version=self.version
         )
 
-        from .vectorstore import ChatshellVectorsearch
-        rag_provider    = ChatshellVectorsearch()
+        context_manager = ContextManager()
+        context_manager.set_doc_base_dir(self.doc_base_dir)
         # Status variables
         rag_enabled     = False
-        rag_mode        = 0  # 0 = file, 1 = web, 2 = clipboard
-        rag_content_list = []
-        rag_update_time = ""
         context_enabled = False
-        context_update_time = ""
 
         @app.get("/v1/models")
         async def list_models():
@@ -137,58 +131,6 @@ class Chatshell:
             # OpenAI returns an OpenAIObject, which is not JSON serializable.
             # Use .to_dict() to get a serializable dictionary.
             return JSONResponse(model_list)
-        
-        def rag_update_file(document_path)->list:
-            nonlocal rag_content_list, rag_update_time
-            # Split paths if more than one
-            document_paths_arg = document_path.split(";")
-
-            # Check document exist
-            document_paths_exist = []
-            output_list = []
-
-            for doc in document_paths_arg:
-                doc_current = doc
-                if not os.path.isfile(doc_current):
-                    # Document is not available at absolute path, checking rel. path
-                    doc_current = os.path.join(self.doc_base_dir, doc_current)
-                    if not os.path.isfile(doc_current):
-                        # Document is not available -> return error
-                        print(f"--> Document {doc_current} not found.")
-                        output_list.append(f"Document {doc_current} not found.")
-                        continue
-
-                output_list.append(f"Document {doc_current} existing and added to RAG document list.")
-                document_paths_exist.append(doc_current)
-
-            if len(document_paths_exist) == 0:
-                print("--> No existing document found at given path.")
-                output_list.insert(0, "No existing document found at given path.")
-                return [False, "\n".join(output_list)]
-
-            # Update RAG
-            rag_content_list = document_paths_exist
-            rag_update_ok = rag_provider.init_vectorstore_pdf(document_paths_exist)
-            rag_update_time = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
-            
-            if rag_update_ok:
-                output_list.insert(0, "Ready, you can now chat with your document(s)!")
-            else:
-                output_list.insert(0, "There was a problem updating the RAG system. Please try again.")
-
-            return [rag_update_ok, "\n".join(output_list)]
-        
-        def rag_update_web(url, deep):
-            nonlocal rag_update_time, rag_content_list
-            # Split paths if more than one
-            urls = url.split(";")
-            rag_content_list = urls
-            rag_update_time = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
-
-            # Update RAG
-            rag_update_ok = rag_provider.init_vectorstore_web(urls, deep)
-
-            return rag_update_ok
 
         def is_url(path_or_url):
             """
@@ -288,8 +230,8 @@ class Chatshell:
 
         @app.post("/v1/chat/completions")
         async def chat_completions(request: Request):
-            nonlocal rag_enabled, rag_provider, context_enabled, llm_server
-            nonlocal rag_mode, rag_content_list, rag_update_time, context_update_time
+            nonlocal rag_enabled, context_enabled, llm_server
+
             try:
                 payload = await request.json()
 
@@ -322,7 +264,7 @@ class Chatshell:
                     shellmode_active = True
 
                 # ==== Start command control sequence ====
-                
+
                 tokens = last_user_message.split()
                 command = tokens[0].lower()
                 args = tokens[1:]
@@ -358,16 +300,15 @@ class Chatshell:
 
                     stream_response = generate_chat_completion_chunks(command_list)
                     return EventSourceResponse(event_generator(stream_response))
-                
+
                 if command == "/chatwithfile":
                     if len(args) != 1:
                         stream_response = generate_chat_completion_chunks("Usage: /chatwithfile <Path to PDF or txt file>")
                         return EventSourceResponse(event_generator(stream_response))
-                   
+
                     else:
-                        rag_update_ok, output_msg = rag_update_file(args[0])
+                        rag_update_ok, output_msg = context_manager.rag_update_file(args[0])
                         rag_enabled = rag_update_ok
-                        rag_mode = 0
 
                         stream_response = generate_chat_completion_chunks(output_msg)
                         return EventSourceResponse(event_generator(stream_response))
@@ -382,7 +323,7 @@ class Chatshell:
                             return EventSourceResponse(event_generator(stream_response))
 
                         com_index = 1
-    
+
                     else:
                         deep_crawl = False
 
@@ -392,9 +333,8 @@ class Chatshell:
 
                         com_index = 0
 
-                    rag_update_ok = rag_update_web(args[com_index], deep_crawl)
+                    rag_update_ok = context_manager.rag_update_web(args[com_index], deep_crawl)
                     rag_enabled = rag_update_ok
-                    rag_mode = 1
 
                     if rag_update_ok:
                         stream_response = generate_chat_completion_chunks(f"Ready, you can now chat with {args[com_index]}!")
@@ -402,20 +342,19 @@ class Chatshell:
                     else:
                         stream_response = generate_chat_completion_chunks(f"There was an error while reading the document {args[com_index]}, please try again.")
                         return EventSourceResponse(event_generator(stream_response))
-                    
+
                 if command == "/chatwithclipbrd":
 
                     # Handle as Clipboard content
                     clip_content = get_text_clipboard()
                     if clip_content != None:
                         # RAG update with clipboard content
-                        rag_update_ok = rag_provider.init_vectorstore_str(clip_content)
-                        rag_enabled = rag_update_ok
-                        rag_mode = 2
+                        rag_update_ok = context_manager.rag_update_clipbrd(clip_content)
+                        rag_enabled = rag_update_ok 
                     else:
                         stream_response = generate_chat_completion_chunks(f"The clipboard is empty or not valid text content.")
                         return EventSourceResponse(event_generator(stream_response))
-                    
+
                     if rag_update_ok:
                         stream_response = generate_chat_completion_chunks("Ready, you can now chat with the clipboard content!")
                         return EventSourceResponse(event_generator(stream_response))
@@ -500,7 +439,7 @@ class Chatshell:
                         try:
                             # Create summary
                             print("--> Start summarization...")
-                            text_summary = rag_provider.generate_text_summary(chunk_list)
+                            text_summary = context_manager.rag_provider.generate_text_summary(chunk_list)
                             print("--> Generated summary chunks.")
 
                             # Build context
@@ -546,11 +485,10 @@ class Chatshell:
                 if command == "/addclipboard":
                     # Add all clipboard content to context list
                     context_enabled = True
-                    context_update_time = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
 
                     clip_content = get_text_clipboard()
                     if clip_content != None:
-                        rag_provider.add_context(clip_content)
+                        context_manager.add_context(clip_content)
                         stream_response = generate_chat_completion_chunks(f"The clipboard content was inserted into context.")
                         return EventSourceResponse(event_generator(stream_response))
                     else:
@@ -560,23 +498,22 @@ class Chatshell:
                 if command == "/forgetall":
                     # Disable RAG and other inserted contexts
                     rag_enabled     = False
-                    rag_content_list = []
                     context_enabled = False
-                    rag_provider.reset_context()
+                    context_manager.reset_context()
                     stream_response = generate_chat_completion_chunks("Document or website context is no longer included in chat.")
                     return EventSourceResponse(event_generator(stream_response))
                 
                 if command == "/forgetctx":
                     # Disable other inserted contexts
                     context_enabled = False
-                    rag_provider.reset_context()
+                    context_manager.reset_context()
                     stream_response = generate_chat_completion_chunks("Context is no longer included in chat.")
                     return EventSourceResponse(event_generator(stream_response))
                 
                 if command == "/forgetdoc":
                     # Disable RAG
                     rag_enabled     = False
-                    rag_content_list = []
+                    context_manager.reset_rag_context()
                     stream_response = generate_chat_completion_chunks("Document or website context is no longer included in chat.")
                     return EventSourceResponse(event_generator(stream_response))
                 
@@ -719,18 +656,18 @@ class Chatshell:
                     # RAG Status
                     tmp_rag = []
                     tmp_rag.append(f"- **Enabled:** {'Yes' if rag_enabled else 'No'}")
-                    rag_mode_str = {0: "File", 1: "Web", 2: "Clipboard"}.get(rag_mode, "Unknown")
+                    rag_mode_str = {0: "File", 1: "Web", 2: "Clipboard"}.get(context_manager.rag_mode, "Unknown")
                     if rag_enabled:
                         tmp_rag.append(f"- **Mode:** {rag_mode_str}")
-                    tmp_rag.append(f"- **Loaded Content:** {rag_content_list if rag_content_list else 'None'}")
-                    tmp_rag.append(f"- **Last Update:** {rag_update_time if rag_update_time else 'Never'}")
+                    tmp_rag.append(f"- **Loaded Content:** {context_manager.rag_content_list if context_manager.rag_content_list else 'None'}")
+                    tmp_rag.append(f"- **Last Update:** {context_manager.rag_update_time if context_manager.rag_update_time else 'Never'}")
                     status_message += "\n".join(tmp_rag) + "\n"
 
                     # Add information about context status
                     status_message += "### Additional context\n"
                     tmp_ctx = []
                     tmp_ctx.append(f"- **Enabled:** {'Yes' if context_enabled else 'No'}")
-                    tmp_ctx.append(f"- **Last Update:** {context_update_time if context_update_time else 'Never'}")
+                    tmp_ctx.append(f"- **Last Update:** {context_manager.context_update_time if context_manager.context_update_time else 'Never'}")
                     status_message += "\n".join(tmp_ctx) + "\n"
 
                     stream_response = generate_chat_completion_chunks(status_message)
@@ -764,7 +701,7 @@ class Chatshell:
                     search_query = last_user_message
 
                     # Query Vectorstore
-                    rag_output = rag_provider.search_knn(search_query, num_chunks=self.rag_max_chunks)
+                    rag_output = context_manager.rag_provider.search_knn(search_query, num_chunks=self.rag_max_chunks)
 
                     rag_context = "The following parts of a document or website should be considered when generating responses and/or answers to the users questions:\n"
                     rag_sources = []
@@ -802,7 +739,7 @@ class Chatshell:
 
                 if context_enabled:
                     # Adding context if there is something
-                    current_context = rag_provider.get_context()
+                    current_context = context_manager.get()
 
                     if current_context != "":
                         current_context += f"There is some additional information in the context that can help answer the user's question. Do not refer directly to this context.\n"
