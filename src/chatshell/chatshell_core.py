@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import os, appdirs, time, json, uuid
 from multiprocessing import Process, Event
 import pyperclip
+from difflib import SequenceMatcher
 from .llm_server import LocalLLMServer
 from .context_manager import ContextManager
 
@@ -27,6 +28,7 @@ class Chatshell:
         self.chatshell_config_path  = CONFIG_DIR / 'chatshell_server_config.json'
         self.chatshell_config       = None
         self.doc_base_dir           = None
+        self.output_base_dir        = None
         self.rag_document_user_dirs = []
         self.website_crawl_depth    = 1
         self.rag_chunk_count        = 4
@@ -48,8 +50,10 @@ class Chatshell:
                 # Template content of the llm_server_config.json
                 if self.termux:
                     doc_base_dir_tmp = "~/storage/shared/chatshell/Documents"
+                    self.output_base_dir = Path(os.path.expanduser("~/storage/shared/chatshell/Output"))
                 else:
                     doc_base_dir_tmp = "~/chatshell/Documents"
+                    self.output_base_dir = Path(os.path.expanduser("~/chatshell/Output"))
  
                 tmp_chatshell_config = {
                     "rag-document-base-dir": doc_base_dir_tmp,
@@ -91,17 +95,37 @@ class Chatshell:
 
     def _run_server(self, shutdown_event):
         self.doc_base_dir.mkdir(parents=True, exist_ok=True)
+        self.output_base_dir.mkdir(parents=True, exist_ok=True)
 
         self.command_list = [
+            "/help",
             "/filechat",
             "/webchat",
             "/clipchat",
-            "/status",
-            "/llmstatus",
-            "/forgetcontext",
+            "/addclipboard",
             "/savetask",
             "/listtasks",
-            "/taskinfo"
+            "/taskinfo",
+            "/deletetask",
+            "/forgetall",
+            "/forgetctx",
+            "/forgetdoc",
+            "/updatemodels",
+            "/startendpoint",
+            "/restartendpoint",
+            "/stopendpoint",
+            "/stopallendpnts",
+            "/llmstatus",
+            "/setautostartendpoint",
+            "/listendpoints",
+            "/status",
+            "/shellmode",
+            "/version",
+            "/exit",
+            "/addinstruction",
+            "/saveinstruction",
+            "/loadinstruction",
+            "/save"
         ]
 
         # Start LLM server
@@ -158,6 +182,24 @@ class Chatshell:
             except Exception:
                 return False
         
+        def find_similar_command(input_command: str, threshold: float = 0.82):
+            if not input_command or not input_command.startswith("/"):
+                return None, 0.0
+
+            best_command = None
+            best_score = 0.0
+
+            for registered_command in self.command_list:
+                score = SequenceMatcher(None, input_command, registered_command).ratio()
+                if score > best_score:
+                    best_score = score
+                    best_command = registered_command
+
+            if best_score >= threshold:
+                return best_command, best_score
+
+            return None, best_score
+
         def generate_chat_completion_chunks(text):
             response_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
             
@@ -310,6 +352,9 @@ class Chatshell:
                 # Get last user message
                 messages = payload.get("messages", [])
 
+                # Store current payload to context manager
+                context_manager.payload = payload
+
                 # Remove any message whose content matches a command in command list, and the following message
                 # EXCEPT if the command is in the last message.
                 i = 0
@@ -338,10 +383,25 @@ class Chatshell:
                 # ==== Start command control sequence ====
 
                 tokens = last_user_message.split()
-                # First part of message before first whitespace
-                command = tokens[0].lower()
-                # All following parts after first whitespace
-                args = tokens[1:]
+
+                if tokens:
+                    # First part of message before first whitespace
+                    command = tokens[0].lower()
+                    # All following parts after first whitespace
+                    args = tokens[1:]
+                else:
+                    command = ""
+                    args = []
+
+                if command and command.startswith("/") and command not in self.command_list:
+                    similar_command, similarity = find_similar_command(command)
+                    if similar_command:
+                        similarity_message = (
+                            f"The input '{command}' is not a valid command. It is similar to '{similar_command}'. "
+                            "Please check the command spelling and correct it if you want to execute a command."
+                        )
+                        stream_response = generate_chat_completion_chunks(similarity_message)
+                        return EventSourceResponse(event_generator(stream_response))
 
                 if command == "/help":
                     # send back test message
@@ -392,6 +452,39 @@ class Chatshell:
 
                         stream_response = generate_chat_completion_chunks(output_msg)
                         return EventSourceResponse(event_generator(stream_response))
+                    
+                if command == "/dirchat":
+                    if len(args) < 1 or len(args) > 2:
+                        stream_response = generate_chat_completion_chunks("Usage: /dirchat <Path to directory with documents> [filetype]")
+                        return EventSourceResponse(event_generator(stream_response))
+
+                    else:
+                        dir_path = args[0]
+                        filetype = args[1] if len(args) == 2 else None
+                        rag_update_ok, output_msg = context_manager.rag_update_directory(dir_path, filetype)
+                        rag_enabled = rag_update_ok
+
+                        if rag_update_ok:
+                            stream_response = generate_chat_completion_chunks(f"Ready, you can now chat with the files in {dir_path}!\n{output_msg}")
+                            return EventSourceResponse(event_generator(stream_response))
+                        else:
+                            stream_response = generate_chat_completion_chunks(f"There was an error while creating the vectorstore index, please try again.")
+                            return EventSourceResponse(event_generator(stream_response))
+
+                if command == "/msg2rag":
+                    # Create the vectorstore index to chat with from saved message in the output folder
+                    dir_path = str(self.output_base_dir)
+                    filetype = "json"
+                    rag_update_ok, output_msg = context_manager.rag_update_directory(dir_path, filetype)
+                    rag_enabled = rag_update_ok
+
+                    if rag_update_ok:
+                        stream_response = generate_chat_completion_chunks(f"Ready, you can now chat with your saved conversations!")
+                        return EventSourceResponse(event_generator(stream_response))
+                    else:
+                        stream_response = generate_chat_completion_chunks(f"There was an error while creating the vectorstore index from your saved conversations.")
+                        return EventSourceResponse(event_generator(stream_response))
+                
 
                 if command == "/webchat":
                     if args[0] == "/deep":
@@ -840,65 +933,53 @@ class Chatshell:
                     stream_response = generate_chat_completion_chunks(status_message)
                     return EventSourceResponse(event_generator(stream_response))
 
-                if command == "/shellmode":
-                    # Activate shell mode for specific chat by inserting the keyword
-                    stream_response = generate_chat_completion_chunks(f"This chat is now marked as shell-chat, no LLM interaction will be performed on future inputs.")
-                    return EventSourceResponse(event_generator(stream_response))
-
-                if command == "/version":
-                    # Output application version
-                    stream_response = generate_chat_completion_chunks(f"Chatshell application version: {self.version}")
-                    return EventSourceResponse(event_generator(stream_response))
-                
-                if command == "/exit":
-                    # Properly quit chatshell server
-                    try:
-                        llm_server.stop_all_processes()
-                    except Exception as e:
-                        print(f"Error stopping LLM server processes: {e}")
-                    # Attempt to gracefully shutdown the server if possible
-                    try:
-                        if 'server' in locals() and hasattr(server, 'should_exit'):
-                            server.should_exit = True
-                    except Exception as e:
-                        print(f"Error signaling server shutdown: {e}")
-                    stream_response = generate_chat_completion_chunks("Chatshell server is shutting down.")
-                    return EventSourceResponse(event_generator(stream_response))
-                
-                # ========================================
-
-                # /reply implementation
-                if command == "/reply":
-                    # Usage: /reply <msg_num> "<instruction>"
+                if command == "/refer":
+                    # Refer to a specific part of the conversation
+                    # Usage: /refer <msg_num|/lastmessage> <instruction>
                     if len(args) < 2:
-                        stream_response = generate_chat_completion_chunks("Usage: /reply <msg_num> \"<instruction>\"")
+                        stream_response = generate_chat_completion_chunks("Usage: /refer <msg_num|/lastmessage> <instruction>")
                         return EventSourceResponse(event_generator(stream_response))
-                    try:
-                        msg_num = int(args[0])
-                    except Exception:
-                        stream_response = generate_chat_completion_chunks("First argument must be an integer (e.g., -1 for last message)")
-                        return EventSourceResponse(event_generator(stream_response))
+
+                    msg_arg = args[0]
+                    if msg_arg == "/lastmessage":
+                        ref_message_dict = context_manager.get_lastmessage()
+                        if not ref_message_dict:
+                            stream_response = generate_chat_completion_chunks("No assistant message found to reference.")
+                            return EventSourceResponse(event_generator(stream_response))
+                    else:
+                        try:
+                            msg_num = int(msg_arg)
+                        except Exception:
+                            stream_response = generate_chat_completion_chunks("First argument must be an integer (e.g., -1 for last message) or /lastmessage")
+                            return EventSourceResponse(event_generator(stream_response))
+
+                        ref_message_dict = context_manager.get_message(msg_num)
+                        if not ref_message_dict:
+                            stream_response = generate_chat_completion_chunks(f"Message index {msg_num} is out of range.")
+                            return EventSourceResponse(event_generator(stream_response))
+
                     # Join the rest as the instruction, remove surrounding quotes if present
                     instruction = " ".join(args[1:]).strip()
                     if instruction.startswith('"') and instruction.endswith('"'):
                         instruction = instruction[1:-1]
-                    # Find the referenced message
-                    ref_index = msg_num if msg_num >= 0 else len(messages) + msg_num
-                    if not (0 <= ref_index < len(messages)):
-                        stream_response = generate_chat_completion_chunks(f"Message index {msg_num} is out of range.")
-                        return EventSourceResponse(event_generator(stream_response))
-                    ref_message = messages[ref_index].get("content", "")
+
+                    ref_message = ref_message_dict.get("content", "")
+
                     # Combine referenced message and instruction
                     combined_prompt = f"Message:\n{ref_message}\n\nInstruction:\n{instruction}"
+
                     # Prepare payload for completion
-                    payload["messages"] = payload["messages"][:-1]  # Remove last user input
-                    payload["messages"].append({"role": "user", "content": combined_prompt})
+                    # Only use the referenced message and instruction as the new payload
+                    payload["messages"] = [{"role": "user", "content": combined_prompt}]
+
                     # Streaming mode
                     if stream:
                         stream_response = client.chat.completions.create(**payload)
                         return EventSourceResponse(event_generator(stream_response))
+
                     # Non-streaming mode
                     response = client.chat.completions.create(**payload)
+
                     return JSONResponse(response.model_dump_json())
 
                 if command == "/addinstruction":
@@ -950,29 +1031,139 @@ class Chatshell:
                             stream_response = generate_chat_completion_chunks(f"Failed to load instruction '{instruction_name}'.")
                         return EventSourceResponse(event_generator(stream_response))
 
-                # /runinstruction implementation
                 if command == "/runinstruction":
-                    if len(args) != 1:
-                        stream_response = generate_chat_completion_chunks("Usage: /runinstruction <Instruction name>")
-                        return EventSourceResponse(event_generator(stream_response))
+                    # Load instruction vom DB and invoke inference
+                    reference_message = None
+
+                    if "/lastmessage" in args:
+                        args_wo_flag = [a for a in args if a != "/lastmessage"]
+                        if len(args_wo_flag) != 1:
+                            stream_response = generate_chat_completion_chunks("Usage: /runinstruction <Instruction name> [/lastmessage | /refer <msg_num>]")
+                            return EventSourceResponse(event_generator(stream_response))
+                        instruction_name = args_wo_flag[0]
+                        reference_message = context_manager.get_lastmessage()
+                        if not reference_message:
+                            stream_response = generate_chat_completion_chunks("No assistant message found to reference.")
+                            return EventSourceResponse(event_generator(stream_response))
+                    elif "/refer" in args:
+                        try:
+                            refer_pos = args.index("/refer")
+                            msg_arg = args[refer_pos + 1]
+                            msg_num = int(msg_arg)
+                            if refer_pos != 1 or len(args) != 3:
+                                raise ValueError()
+                            instruction_name = args[0]
+                        except (ValueError, IndexError):
+                            stream_response = generate_chat_completion_chunks("Usage: /runinstruction <Instruction name> /refer <msg_num>")
+                            return EventSourceResponse(event_generator(stream_response))
+
+                        reference_message = context_manager.get_message(msg_num)
+                        if not reference_message:
+                            stream_response = generate_chat_completion_chunks(f"Message index {msg_num} is out of range.")
+                            return EventSourceResponse(event_generator(stream_response))
                     else:
+                        if len(args) != 1:
+                            stream_response = generate_chat_completion_chunks("Usage: /runinstruction <Instruction name> [/lastmessage | /refer <msg_num>]")
+                            return EventSourceResponse(event_generator(stream_response))
                         instruction_name = args[0]
-                        instruction_content = context_manager.load_instruction(instruction_name)
-                        if not instruction_content:
-                            stream_response = generate_chat_completion_chunks(f"Failed to load instruction '{instruction_name}'.")
-                            return EventSourceResponse(event_generator(stream_response))
-                        # Insert the loaded instruction as a user message into payload, then run completion directly (skip last user input)
-                        payload["messages"] = payload["messages"][:-1]  # Remove last user input
+
+                    instruction_content = context_manager.load_instruction(instruction_name)
+                    if not instruction_content:
+                        stream_response = generate_chat_completion_chunks(f"Failed to load instruction '{instruction_name}'.")
+                        return EventSourceResponse(event_generator(stream_response))
+
+                    # Prepare new payload messages
+                    if reference_message is not None:
+                        ref_message_content = reference_message.get("content", "")
+                        combined_prompt = f"Message:\n{ref_message_content}\n\nInstruction:\n{instruction_content}"
+                        payload["messages"] = [{"role": "user", "content": combined_prompt}]
+                    else:
+                        # Default: use all messages, append instruction as last user message
                         payload["messages"].append({"role": "user", "content": instruction_content})
-                        # Streaming mode
-                        if stream:
-                            stream_response = client.chat.completions.create(**payload)
+
+                    # Streaming mode
+                    if stream:
+                        stream_response = client.chat.completions.create(**payload)
+                        return EventSourceResponse(event_generator(stream_response))
+                    
+                    # Non-streaming mode
+                    response = client.chat.completions.create(**payload)
+                    return JSONResponse(response.model_dump_json())
+
+                if command == "/save":
+                    # Save a conversation to output folder
+                    if len(args) != 1:
+                        stream_response = generate_chat_completion_chunks("Usage: /save <format json or md>")
+                        return EventSourceResponse(event_generator(stream_response))
+
+                    else:
+                        # Save the entire conversation in payload, removing the last user message
+                        messages = payload.get("messages", [])
+                        if messages:
+                            messages_to_save = messages[:-1]  # Remove last user message
+                        else:
+                            messages_to_save = []
+
+                        # Determine format
+                        fmt = args[0].lower()
+
+                        filename = f"conversation_{uuid.uuid4().hex[:8]}"
+                        output_dir = self.output_base_dir
+                        output_dir.mkdir(parents=True, exist_ok=True)
+
+                        if fmt == "json":
+                            filepath = output_dir / f"{filename}.json"
+                            with open(filepath, "w", encoding="utf-8") as f:
+                                json.dump(messages_to_save, f, ensure_ascii=False, indent=2)
+
+                            stream_response = generate_chat_completion_chunks(f"Conversation saved as {filepath}")
                             return EventSourceResponse(event_generator(stream_response))
-                        # Non-streaming mode
-                        response = client.chat.completions.create(**payload)
-                        return JSONResponse(response.model_dump_json())
 
+                        elif fmt == "md":
+                            filepath = output_dir / f"{filename}.md"
+                            # Convert messages to markdown
+                            md_lines = []
+                            for msg in messages_to_save:
+                                role = msg.get("role", "user")
+                                content = msg.get("content", "")
+                                md_lines.append(f"**{role.capitalize()}:**\n{content}\n\n---\n")
+                            with open(filepath, "w", encoding="utf-8") as f:
+                                f.writelines(md_lines)
 
+                            stream_response = generate_chat_completion_chunks(f"Conversation saved as {filepath}")
+                            return EventSourceResponse(event_generator(stream_response))
+
+                        else:
+                            stream_response = generate_chat_completion_chunks("Format must be 'json' or 'md'.")
+                            return EventSourceResponse(event_generator(stream_response))
+
+                if command == "/shellmode":
+                    # Activate shell mode for specific chat by inserting the keyword
+                    stream_response = generate_chat_completion_chunks(f"This chat is now marked as shell-chat, no LLM interaction will be performed on future inputs.")
+                    return EventSourceResponse(event_generator(stream_response))
+
+                if command == "/version":
+                    # Output application version
+                    stream_response = generate_chat_completion_chunks(f"Chatshell application version: {self.version}")
+                    return EventSourceResponse(event_generator(stream_response))
+                
+                if command == "/exit":
+                    # Properly quit chatshell server
+                    try:
+                        llm_server.stop_all_processes()
+                    except Exception as e:
+                        print(f"Error stopping LLM server processes: {e}")
+                    # Attempt to gracefully shutdown the server if possible
+                    try:
+                        if 'server' in locals() and hasattr(server, 'should_exit'):
+                            server.should_exit = True
+                    except Exception as e:
+                        print(f"Error signaling server shutdown: {e}")
+                    stream_response = generate_chat_completion_chunks("Chatshell server is shutting down.")
+                    return EventSourceResponse(event_generator(stream_response))
+                
+                # ========================================
+                
                 if shellmode_active:
                     stream_response = generate_chat_completion_chunks("Shell mode is enabled for this chat. You can use this chat for communication with chatshell itself - your messages are not redirected to a LLM inference endpoint.\nIf you want to communicate with an LLM, please open a new chat conversion.")
                     return EventSourceResponse(event_generator(stream_response))
@@ -1110,4 +1301,3 @@ class Chatshell:
                     self.process.terminate()
                 else:
                     print("--> RAG server stopped gracefully.")
-

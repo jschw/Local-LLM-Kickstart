@@ -38,6 +38,56 @@ class ContextManager:
         # Instruction management
         self.instruction_list        = []
 
+        # Current payload
+        self.payload            = None
+
+    def _get_payload_messages(self):
+        """
+        Return the messages list from the current payload or an empty list if unavailable.
+        """
+        if not isinstance(self.payload, dict):
+            return []
+        messages = self.payload.get("messages", [])
+        return messages if isinstance(messages, list) else []
+
+    def get_lastmessage(self):
+        """
+        Retrieve the last assistant message preceding the latest user entry.
+        Returns the message dictionary or None if no such message exists.
+        """
+        messages = self._get_payload_messages()
+        if not messages:
+            return None
+
+        start_index = len(messages) - 1
+        if start_index >= 0 and messages[start_index].get("role") == "user":
+            start_index -= 1
+
+        for index in range(start_index, -1, -1):
+            message = messages[index]
+            if message.get("role") == "assistant":
+                return message
+
+        return None
+
+    def get_message(self, msg_num):
+        """
+        Retrieve a message by its absolute or negative index. Returns the
+        message dictionary or None if the index is out of bounds.
+        """
+        messages = self._get_payload_messages()
+        if not messages:
+            return None
+
+        if not isinstance(msg_num, int):
+            return None
+
+        index = msg_num if msg_num >= 0 else len(messages) + msg_num
+        if 0 <= index < len(messages):
+            return messages[index]
+
+        return None
+
     def save_instruction(self, instruction_name, instruction_content):
         """
         Save an instruction to the database if both name and content are provided.
@@ -246,6 +296,68 @@ class ContextManager:
             output_list.insert(0, "There was a problem updating the RAG system. Please try again.")
 
         return [rag_update_ok, "\n".join(output_list)]
+
+    def rag_update_directory(self, path, filetype=None):
+        """
+        Update the RAG vectorstore with all files in a directory (optionally filtered by filetype).
+        Supports: pdf, txt, json, md. If filetype is None, all supported files are included.
+        """
+        output_list = []
+        directory = Path(path)
+        if not directory.is_dir():
+            output_list.append(f"Directory {path} not found.")
+            return [False, "\n".join(output_list)]
+
+        supported_types = {"pdf", "txt", "json", "md"}
+        def get_ext(f):
+            return Path(f).suffix.lower().lstrip('.')
+
+        # Gather files
+        files = [str(f) for f in directory.rglob("*") if f.is_file()]
+        if filetype is None:
+            filtered_files = [f for f in files if get_ext(f) in supported_types]
+        else:
+            ext = filetype.lower().lstrip('.')
+            if ext not in supported_types:
+                output_list.append(f"Filetype '{filetype}' is not supported. Supported: {', '.join(supported_types)}.")
+                return [False, "\n".join(output_list)]
+            filtered_files = [f for f in files if get_ext(f) == ext]
+
+        if not filtered_files:
+            output_list.append(f"No supported files found in {path} matching type '{filetype}'.")
+            return [False, "\n".join(output_list)]
+
+        self.rag_content_list = filtered_files
+        self.rag_update_time = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
+        self.task_type = "directory"
+        self.rag_active = True
+
+        # Only allow all-pdf or all-txt/json/md (no mixing)
+        if all(get_ext(f) == "pdf" for f in filtered_files):
+            rag_update_ok = self.rag_provider.init_vectorstore_pdf(filtered_files)
+        elif all(get_ext(f) in {"txt", "json", "md"} for f in filtered_files):
+            text_content = ""
+            for f in filtered_files:
+                try:
+                    with open(f, "r", encoding="utf-8") as fin:
+                        text_content += fin.read() + "\n"
+                except Exception as e:
+                    output_list.append(f"Error reading {f}: {e}")
+            if not text_content.strip():
+                output_list.append("No text content could be read from the files.")
+                return [False, "\n".join(output_list)]
+            rag_update_ok = self.rag_provider.init_vectorstore_str(text_content)
+        else:
+            output_list.append("Mixed or unsupported file types in selection. Only all-pdf or all-txt/json/md supported.")
+            return [False, "\n".join(output_list)]
+
+        if rag_update_ok:
+            output_list.insert(0, "Ready, you can now chat with your document(s)!")
+        else:
+            output_list.insert(0, "There was a problem updating the RAG system. Please try again.")
+
+        return [rag_update_ok, "\n".join(output_list)]
+
 
     def rag_update_web(self, url, deep):
         # Split paths if more than one
